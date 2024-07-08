@@ -1,0 +1,6 @@
+data/
+notes/
+results/
+my_results/
+tests.ipynb
+tmp/*
