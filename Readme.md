@@ -7,8 +7,11 @@ Will make its way to pysal/momepy.
 ## Workflow
 
 1. `01_street_sightlines.ipynb` defines the sightlines
+
 2. `02_sightlines_plot.ipynb`
+
 ~~3. `03_sightlines_DEM.ipynb` enhances sightlines with z coords and computes slope~~
+
 4. `04_street_indicators.ipynb` collects and produces street-based metrics from the point-based measures
 
 ## Status
