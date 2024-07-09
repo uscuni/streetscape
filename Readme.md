@@ -15,7 +15,7 @@ Will make its way to pysal/momepy.
 
 - [x] `01_street_sightlines.ipynb` running
 - [x] `02_sightlines_plot.ipynb` running
-- [ ] `03_sightlines_DEM.ipynb` running (we might skip this *)
+- [ ] `03_sightlines_DEM.ipynb` running
+> We are interested only in urban morphometrics so we might skip the third part.
 - [ ] `04_street_indicators.ipynb` running
 
-* We are interested only in urban morphometrics.
