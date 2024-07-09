@@ -10,3 +10,10 @@ Will make its way to pysal/momepy.
 2. `02_sightlines_plot.ipynb`
 3. `03_sightlines_DEM.ipynb`
 4. `04_street_indicators.ipynb` collects and produces street-based metrics from the point-based measures
+
+## Status
+
+- [x] `01_street_sightlines.ipynb` running
+- [ ] `02_sightlines_plot.ipynb` running
+- [ ] `03_sightlines_DEM.ipynb` running
+- [ ] `04_street_indicators.ipynb` running
