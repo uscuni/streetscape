@@ -10,7 +10,7 @@ Will make its way to pysal/momepy.
 
 2. `02_sightlines_plot.ipynb`
 
-~~3. `03_sightlines_DEM.ipynb` enhances sightlines with z coords and computes slope~~
+3. `03_sightlines_DEM.ipynb` enhances sightlines with z coords and computes slope
 
 4. `04_street_indicators.ipynb` collects and produces street-based metrics from the point-based measures
 
@@ -19,7 +19,7 @@ Will make its way to pysal/momepy.
 - [x] `01_street_sightlines.ipynb` running
 - [x] `02_sightlines_plot.ipynb` running
 - [ ] `03_sightlines_DEM.ipynb` running
-> We are interested only in urban morphometrics so we might skip the third part.
+> ~~We are interested only in urban morphometrics so we might skip the third part.~~
 - [x] `04_street_indicators.ipynb` running
 
 ## Notes
