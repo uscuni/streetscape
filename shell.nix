@@ -12,5 +12,6 @@
       python311Packages.scikit-learn
       python311Packages.seaborn
       python311Packages.jupyter
+      python311Packages.rasterio
       ];
 }
