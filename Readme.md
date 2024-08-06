@@ -4,6 +4,10 @@ Code by University of Cote'd Azur - Alessandro Araldi & Giovanni Fusco
 
 Will make its way to pysal/momepy.
 
+## Notes
+
+Work is now being made in [pysal/momepy fork](https://github.com/novotny-marek/momepy).
+
 ## Methods workflow
 
 1. `01_street_sightlines.ipynb` defines the sightlines
@@ -17,7 +21,7 @@ Will make its way to pysal/momepy.
 ## Repository workflow
 
 If you commit changes in any of the four notebooks, please begin the commit message with the corresponding
-number of the method (eg. 04 Cleanup of imports)
+number of the method (eg. 04 Cleanup of imports).
 
 ## Status
 
@@ -27,5 +31,3 @@ number of the method (eg. 04 Cleanup of imports)
 - [x] `02_sightlines_plot.ipynb` running
 - [x] `03_sightlines_DEM.ipynb` running
 - [x] `04_street_indicators.ipynb` running
-
-## Notes
