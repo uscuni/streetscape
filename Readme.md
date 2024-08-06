@@ -21,12 +21,11 @@ number of the method (eg. 04 Cleanup of imports)
 
 ## Status
 
+- [ ] Integrate to pysal/momepy
+
 - [x] `01_street_sightlines.ipynb` running
 - [x] `02_sightlines_plot.ipynb` running
-- [ ] `03_sightlines_DEM.ipynb` running
-> ~~We are interested only in urban morphometrics so we might skip the third part.~~
+- [x] `03_sightlines_DEM.ipynb` running
 - [x] `04_street_indicators.ipynb` running
 
 ## Notes
-
-`03_sightlines_DEM.ipynb` is not needed to run the other three methods
