@@ -10,7 +10,7 @@ import shapely
 from shapely import Point, Polygon, MultiPoint, LineString, MultiLineString
 
 
-class StreetScape:
+class Streetscape:
     def __init__(
         self,
         streets: gpd.GeoDataFrame,
