@@ -5,6 +5,7 @@ import numpy as np
 import rtree
 import pandas as pd
 import momepy
+import shapely
 
 from shapely import Point, Polygon, MultiPoint, LineString, MultiLineString
 
@@ -67,8 +68,10 @@ class StreetScape:
         streets.geometry = streets.force_2d()
 
         nodes, edges = momepy.nx_to_gdf(momepy.node_degree(momepy.gdf_to_nx(streets)))
-        edges["dead_end_left"] = (nodes.degree.loc[edges.node_start] == 1).values
-        edges["dead_end_right"] = (nodes.degree.loc[edges.node_end] == 1).values
+        edges["n1_degree"] = nodes.degree.loc[edges.node_start].values
+        edges["n2_degree"] = nodes.degree.loc[edges.node_end].values
+        edges["dead_end_left"] = edges["n1_degree"] == 1
+        edges["dead_end_right"] = edges["n2_degree"] == 1
         edges["uid"] = np.arange(len(edges))
 
         self.streets = edges
@@ -676,11 +679,8 @@ class StreetScape:
             )
             values.append(indicators)
 
-        self.sightline_indicators = values
-
-    def sightline_df(self):
         df = pd.DataFrame(
-            self.sightline_indicators,
+            values,
             columns=[
                 "uid",
                 "sight_line_points",
@@ -710,9 +710,37 @@ class StreetScape:
         )
         df = df.set_index("uid", drop=False)
 
-        return df
+        df["nodes_degree_1"] = self.streets.apply(
+            lambda row: (
+                (1 if row.n1_degree == 1 else 0) + (1 if row.n2_degree == 1 else 0)
+            )
+            / 2,
+            axis=1,
+        )
 
-    def compute_sigthlines_plot_indicators_one_side(
+        df["nodes_degree_4"] = self.streets.apply(
+            lambda row: (
+                (1 if row.n1_degree == 4 else 0) + (1 if row.n2_degree == 4 else 0)
+            )
+            / 2,
+            axis=1,
+        )
+
+        df["nodes_degree_3_5_plus"] = self.streets.apply(
+            lambda row: (
+                (1 if row.n1_degree == 3 or row.n1_degree >= 5 else 0)
+                + (1 if row.n2_degree == 3 or row.n2_degree >= 5 else 0)
+            )
+            / 2,
+            axis=1,
+        )
+        df["street_length"] = self.streets.length
+        # df["street_width"] = self.streets.street_width  # TODO: this comes as an attribute?
+        df["windingness"] = 1 - momepy.linearity(self.streets)
+
+        self.sightline_indicators = df
+
+    def _compute_sigthlines_plot_indicators_one_side(
         self, sight_line_points, OS_count, SEQ_OS_endpoint
     ):
         parcel_SB_count = []
@@ -810,26 +838,23 @@ class StreetScape:
 
         values = []
 
-        for uid, row in self.sightline_df().iterrows():
+        for uid, row in self.sightline_indicators.iterrows():
             sight_line_values = [uid]
 
-            side_values = self.compute_sigthlines_plot_indicators_one_side(
+            side_values = self._compute_sigthlines_plot_indicators_one_side(
                 row.sight_line_points, row.left_OS_count, row.left_SEQ_OS_endpoints
             )
             sight_line_values += side_values
 
-            side_values = self.compute_sigthlines_plot_indicators_one_side(
+            side_values = self._compute_sigthlines_plot_indicators_one_side(
                 row.sight_line_points, row.right_OS_count, row.right_SEQ_OS_endpoints
             )
             sight_line_values += side_values
 
             values.append(sight_line_values)
 
-        self.plot_indicators = values
-
-    def plot_df(self):
-        df_results = pd.DataFrame(
-            self.plot_indicators,
+        df = pd.DataFrame(
+            values,
             columns=[
                 "uid",
                 "left_parcel_SB_count",
@@ -842,9 +867,784 @@ class StreetScape:
                 "right_parcel_SEQ_SB_depth",
             ],
         )
-        df_results = df_results.set_index("uid", drop=False)
+        df = df.set_index("uid", drop=False)
 
-        return df_results
+        self.plot_indicators = df
+
+    def _compute_slope(self, road_row):
+        start = road_row.sl_start  # Point z
+        end = road_row.sl_end  # Point z
+        slp = road_row.sl_points  # Multipoint z
+
+        if slp == None:
+            # Case when there is no sight line point (e.g. when the road is too short)
+            # just computes slope between start and end
+            if start.z == self.NODATA_RASTER or end.z == self.NODATA_RASTER:
+                # Case when there is at least one invalid z coord
+                return 0, 0, 0, False
+            slope_percent = abs(start.z - end.z) / shapely.distance(start, end)
+            slope_degree = math.degrees(math.atan(slope_percent))
+
+            return slope_percent, slope_degree, 1, True
+
+        # From Multipoint z to Point z list
+        slp_list = [p for p in slp.geoms]
+
+        points = []
+
+        points.append(start)
+        # From Point z list to all points list
+        for p in slp_list:
+            points.append(p)
+        points.append(end)
+
+        # number of points
+        nb_points = len([start]) + len([end]) + len(slp_list)
+
+        # temporary variables to store inter slope values
+        sum_slope_percent = 0
+        sum_slope_radian = 0
+        sum_nb_points = 0
+
+        # if there is one or more sight line points
+        for i in range(1, nb_points - 1):
+            a = points[i - 1]
+            b = points[i + 1]
+
+            if a.z == self.NODATA_RASTER or b.z == self.NODATA_RASTER:
+                # Case when there is no valid z coord in slpoint
+                continue
+
+            sum_nb_points += 1
+            inter_slope_percent = abs(a.z - b.z) / shapely.distance(a, b)
+
+            sum_slope_percent += inter_slope_percent
+            sum_slope_radian += math.atan(inter_slope_percent)
+
+        if sum_nb_points == 0:
+            # Case when no slpoint has a valid z coord
+            # Unable to compute slope
+            return 0, 0, 0, False
+
+        # compute mean of inter slopes
+        slope_percent = sum_slope_percent / sum_nb_points
+        slope_degree = math.degrees(sum_slope_radian / sum_nb_points)
+
+        return slope_degree, slope_percent, sum_nb_points, True
+
+    def compute_slope(self, raster):
+        self.NODATA_RASTER = raster.rio.nodata
+
+        start_points = shapely.get_point(self.streets.geometry, 0)
+        end_points = shapely.get_point(self.streets.geometry, -1)
+
+        # Extract z coords from raster
+        z_start = (
+            raster.drop_vars("spatial_ref")
+            .xvec.extract_points(points=start_points, x_coords="x", y_coords="y")
+            .xvec.to_geopandas()
+            .rename(columns={0: "z"})
+        )
+
+        # Append z values to points
+        z_start["start_point_3d"] = shapely.points(
+            *shapely.get_coordinates(start_points.geometry).T, z=z_start["z"]
+        )
+
+        # Extract z coords from raster
+        z_end = (
+            raster.drop_vars("spatial_ref")
+            .xvec.extract_points(points=end_points, x_coords="x", y_coords="y")
+            .xvec.to_geopandas()
+            .rename(columns={0: "z"})
+        )
+
+        # Append z values to points
+        z_end["end_point_3d"] = shapely.points(
+            *shapely.get_coordinates(end_points.geometry).T, z=z_end["z"]
+        )
+
+        z_points_list = []
+
+        for row in self.sightline_indicators["sight_line_points"].apply(
+            lambda x: MultiPoint(x) if x else None
+        ):
+            if row is not None:
+                points = row.geoms
+
+                z_points = (
+                    raster.drop_vars("spatial_ref")
+                    .xvec.extract_points(points=points, x_coords="x", y_coords="y")
+                    .xvec.to_geopandas()
+                    .rename(columns={0: "z"})
+                )
+
+                z_points["geometry"] = shapely.points(
+                    *shapely.get_coordinates(z_points.geometry).T, z=z_points["z"]
+                )
+                z_points = z_points.drop(columns="z")
+
+                multipoint = MultiPoint(z_points["geometry"].tolist())
+
+            else:
+                multipoint = None
+
+            z_points_list.append(multipoint)
+
+        sightlines = pd.concat(
+            [z_start[["start_point_3d"]], z_end[["end_point_3d"]]], axis=1
+        )
+
+        sightlines = sightlines.rename(
+            columns={"start_point_3d": "sl_start", "end_point_3d": "sl_end"}
+        )
+
+        sightlines["sl_points"] = z_points_list
+
+        slope_values = []
+
+        for _, road_row in sightlines.iterrows():
+            slope_degree, slope_percent, n_slopes, slope_valid = self._compute_slope(
+                road_row
+            )
+
+            slope_values.append([slope_degree, slope_percent, n_slopes, slope_valid])
+
+        self.slope = pd.DataFrame(
+            slope_values,
+            columns=["slope_degree", "slope_percent", "n_slopes", "slope_valid"],
+        )
+
+    # 0.5 contribution if parralel with previous sightpoint setback
+    # 0.5 contribution if parralel with next sightpoint setback
+    def _compute_parallelism_factor(self, side_SB, side_SB_count, max_distance=999):
+        if side_SB_count is None or len(side_SB_count) == 0:
+            return []
+        is_parralel_with_next = []
+        for sb_a, sb_a_count, sb_b, sb_b_count in zip(
+            side_SB[0:-1], side_SB_count[0:-1], side_SB[1:], side_SB_count[1:]
+        ):
+            if sb_a_count == 0 or sb_b_count == 0:
+                is_parralel_with_next.append(False)
+                continue
+            if max_distance is None or max(sb_a, sb_b) <= max_distance:
+                is_parralel_with_next.append(
+                    abs(sb_a - sb_b) < self.sight_line_spacing / 3
+                )
+            else:
+                is_parralel_with_next.append(False)
+        # choice for last point
+        is_parralel_with_next.append(False)
+
+        result = []
+        prev_parralel = False
+        for next_parralel, w, w_is_def in zip(
+            is_parralel_with_next, side_SB, side_SB_count
+        ):
+            # Ajouter condition su
+            factor = 0
+            if prev_parralel:  # max_distance
+                # STOP
+                factor += 0.5
+            if next_parralel:
+                factor += 0.5
+            result.append(factor)
+            prev_parralel = next_parralel
+
+        return result
+
+    def _compute_parallelism_indicators(
+        self,
+        left_SB,
+        left_SB_count,
+        right_SB,
+        right_SB_count,
+        N,
+        n_l,
+        n_r,
+        max_distance=None,
+    ):
+        parallel_left_factors = self._compute_parallelism_factor(
+            left_SB, left_SB_count, max_distance
+        )
+        parallel_right_factors = self._compute_parallelism_factor(
+            right_SB, right_SB_count, max_distance
+        )
+
+        parallel_left_total = sum(parallel_left_factors)
+        parallel_right_total = sum(parallel_right_factors)
+
+        ind_left_par_tot = parallel_left_total / (N - 1) if N > 1 else math.nan
+        ind_left_par_rel = parallel_left_total / (n_l - 1) if n_l > 1 else math.nan
+
+        ind_right_par_tot = parallel_right_total / (N - 1) if N > 1 else math.nan
+        ind_right_par_rel = parallel_right_total / (n_r - 1) if n_r > 1 else math.nan
+
+        ind_par_tot = math.nan
+        if N > 1:
+            ind_par_tot = (parallel_left_total + parallel_right_total) / (2 * N - 2)
+
+        ind_par_rel = math.nan
+        if n_l > 1 or n_r > 1:
+            ind_par_rel = (parallel_left_total + parallel_right_total) / (
+                max(1, n_l) + max(1, n_r) - 2
+            )
+
+        return (
+            ind_left_par_tot,
+            ind_left_par_rel,
+            ind_right_par_tot,
+            ind_right_par_rel,
+            ind_par_tot,
+            ind_par_rel,
+        )
+
+    def compute_street_indicators(self):
+        values = []
+        nb_streets = len(self.sightline_indicators)
+
+        for street_uid, row in self.sightline_indicators.iterrows():
+            street_length = row.street_length
+
+            left_OS_count = row.left_OS_count
+            left_OS = row.left_OS
+            left_SB_count = row.left_SB_count
+            left_SB = row.left_SB
+            left_H = row.left_H
+            left_HW = row.left_HW
+            right_OS_count = row.right_OS_count
+            right_OS = row.right_OS
+            right_SB_count = row.right_SB_count
+            right_SB = row.right_SB
+            right_H = row.right_H
+            right_HW = row.right_HW
+
+            left_BUILT_COVERAGE = row.left_BUILT_COVERAGE
+            left_SEQ_SB_categories = row.left_SEQ_SB_categories
+            left_SEQ_SB_ids = row.left_SEQ_SB_ids
+
+            right_BUILT_COVERAGE = row.right_BUILT_COVERAGE
+            right_SEQ_SB_categories = row.right_SEQ_SB_categories
+            right_SEQ_SB_ids = row.right_SEQ_SB_ids
+
+            front_SB = row.front_SB
+            back_SB = row.back_SB
+
+            N = len(left_OS_count)
+            if N == 0:
+                continue
+
+            # ------------------------
+            # OPENNESS
+            # ------------------------
+            sum_left_OS = np.sum(left_OS)
+            sum_right_OS = np.sum(right_OS)
+
+            ind_left_OS = sum_left_OS / N
+            ind_right_OS = sum_right_OS / N
+            ind_OS = ind_left_OS + ind_right_OS  # ==(left_OS+right_OS)/N
+
+            full_OS = [l + r for l, r in zip(left_OS, right_OS)]
+            # mediane >> med
+            ind_left_OS_med = np.median(left_OS)
+            ind_right_OS_med = np.median(right_OS)
+            ind_OS_med = np.median(full_OS)
+
+            # OPENNESS ROUGHNESS
+            sum_square_error_left_OS = np.sum(
+                [(os - ind_left_OS) ** 2 for os in left_OS]
+            )
+            sum_square_error_right_OS = np.sum(
+                [(os - ind_right_OS) ** 2 for os in right_OS]
+            )
+            sum_abs_error_left_OS = np.sum([abs(os - ind_left_OS) for os in left_OS])
+            sum_abs_error_right_OS = np.sum([abs(os - ind_right_OS) for os in right_OS])
+            ind_OS_STD = math.sqrt(
+                (sum_square_error_left_OS + sum_square_error_right_OS) / (2 * N - 1)
+            )
+            ind_OS_MAD = (sum_abs_error_left_OS + sum_abs_error_right_OS) / (2 * N)
+
+            ind_left_OS_STD = 0  # default
+            ind_right_OS_STD = 0  # default
+            ind_left_OS_MAD = 0  # default
+            ind_right_OS_MAD = 0  # default
+
+            ind_left_OS_MAD = sum_abs_error_left_OS / N
+            ind_right_OS_MAD = sum_abs_error_right_OS / N
+            if N > 1:
+                ind_left_OS_STD = math.sqrt((sum_square_error_left_OS) / (N - 1))
+                ind_right_OS_STD = math.sqrt((sum_square_error_right_OS) / (N - 1))
+
+            sum_abs_error_left_OS_med = np.sum(
+                [abs(os - ind_left_OS_med) for os in left_OS]
+            )
+            sum_abs_error_right_OS_med = np.sum(
+                [abs(os - ind_right_OS_med) for os in right_OS]
+            )
+            ind_left_OS_MAD_med = sum_abs_error_left_OS_med / N
+            ind_right_OS_MAD_med = sum_abs_error_right_OS_med / N
+            ind_OS_MAD_med = (
+                sum_abs_error_left_OS_med + sum_abs_error_right_OS_med
+            ) / (2 * N)
+
+            # ------------------------
+            # SETBACK
+            # ------------------------
+            rel_left_SB = [x for x in left_SB if not math.isnan(x)]
+            rel_right_SB = [x for x in right_SB if not math.isnan(x)]
+            n_l = len(rel_left_SB)
+            n_r = len(rel_right_SB)
+            n_l_plus_r = n_l + n_r
+            sum_left_SB = np.sum(rel_left_SB)
+            sum_right_SB = np.sum(rel_right_SB)
+
+            # SETBACK default values
+            ind_left_SB = sum_left_SB / n_l if n_l > 0 else self.sight_line_width
+            ind_right_SB = sum_right_SB / n_r if n_r > 0 else self.sight_line_width
+            ind_SB = (
+                (sum_left_SB + sum_right_SB) / (n_l_plus_r)
+                if n_l_plus_r > 0
+                else self.sight_line_width
+            )
+
+            sum_square_error_left_SB = np.sum(
+                [(x - ind_left_SB) ** 2 for x in rel_left_SB]
+            )
+            sum_square_error_right_SB = np.sum(
+                [(x - ind_right_SB) ** 2 for x in rel_right_SB]
+            )
+
+            ind_left_SB_STD = (
+                math.sqrt(sum_square_error_left_SB / (n_l - 1)) if n_l > 1 else 0
+            )
+            ind_right_SB_STD = (
+                math.sqrt(sum_square_error_right_SB / (n_r - 1)) if n_r > 1 else 0
+            )
+            ind_SB_STD = (
+                math.sqrt(
+                    (sum_square_error_left_SB + sum_square_error_right_SB)
+                    / (n_l_plus_r - 1)
+                )
+                if n_l_plus_r > 1
+                else 0
+            )
+
+            # medianes
+            ind_left_SB_med = (
+                np.median(rel_left_SB) if n_l > 0 else self.sight_line_width
+            )
+            ind_right_SB_med = (
+                np.median(rel_right_SB) if n_r > 0 else self.sight_line_width
+            )
+            ind_SB_med = (
+                np.median(np.concatenate([rel_left_SB, rel_right_SB]))
+                if n_l_plus_r > 0
+                else self.sight_line_width
+            )
+
+            # MAD
+            sum_abs_error_left_SB = np.sum([abs(x - ind_left_SB) for x in rel_left_SB])
+            sum_abs_error_right_SB = np.sum(
+                [abs(x - ind_right_SB) for x in rel_right_SB]
+            )
+            ind_left_SB_MAD = sum_abs_error_left_SB / n_l if n_l > 0 else 0
+            ind_right_SB_MAD = sum_abs_error_right_SB / n_r if n_r > 0 else 0
+            ind_SB_MAD = (
+                (sum_abs_error_left_SB + sum_abs_error_right_SB) / (n_l_plus_r)
+                if n_l_plus_r > 0
+                else 0
+            )
+
+            # MAD_med
+            sum_abs_error_left_SB_med = np.sum(
+                [abs(x - ind_left_SB_med) for x in rel_left_SB]
+            )
+            sum_abs_error_right_SB_med = np.sum(
+                [abs(x - ind_right_SB_med) for x in rel_right_SB]
+            )
+            ind_left_SB_MAD_med = sum_abs_error_left_SB_med / n_l if n_l > 0 else 0
+            ind_right_SB_MAD_med = sum_abs_error_right_SB_med / n_r if n_r > 0 else 0
+            ind_SB_MAD_med = (
+                (sum_abs_error_left_SB_med + sum_abs_error_right_SB_med) / (n_l_plus_r)
+                if n_l_plus_r > 0
+                else 0
+            )
+
+            # ------------------------
+            # HEIGHT
+            # ------------------------
+            rel_left_H = [x for x in left_H if not math.isnan(x)]
+            rel_right_H = [x for x in right_H if not math.isnan(x)]
+            sum_left_H = np.sum(rel_left_H)
+            sum_right_H = np.sum(rel_right_H)
+
+            # HEIGHT AVERAGE default values
+            ind_left_H = sum_left_H / n_l if n_l > 0 else 0
+            ind_right_H = sum_right_H / n_r if n_r > 0 else 0
+            ind_H = (sum_left_H + sum_right_H) / (n_l_plus_r) if n_l_plus_r > 0 else 0
+
+            sum_square_error_left_H = np.sum(
+                [(x - ind_left_H) ** 2 for x in rel_left_H]
+            )
+            sum_square_error_right_H = np.sum(
+                [(x - ind_right_H) ** 2 for x in rel_right_H]
+            )
+
+            ind_left_H_STD = (
+                math.sqrt(sum_square_error_left_H / (n_l - 1)) if n_l > 1 else 0
+            )
+            ind_right_H_STD = (
+                math.sqrt(sum_square_error_right_H / (n_r - 1)) if n_r > 1 else 0
+            )
+            ind_H_STD = (
+                math.sqrt(
+                    (sum_square_error_left_H + sum_square_error_right_H)
+                    / (n_l_plus_r - 1)
+                )
+                if n_l_plus_r > 1
+                else 0
+            )
+
+            # ------------------------
+            # CROSS_SECTION_PROPORTION (cross sectionnal ratio)
+            # ------------------------
+            rel_left_HW = [x for x in left_HW if not math.isnan(x)]
+            rel_right_HW = [x for x in right_HW if not math.isnan(x)]
+            sum_left_HW = np.sum(rel_left_HW)
+            sum_right_HW = np.sum(rel_right_HW)
+
+            ind_left_HW = sum_left_HW / n_l if n_l > 0 else 0
+            ind_right_HW = sum_right_HW / n_r if n_r > 0 else 0
+            ind_HW = (
+                (sum_left_HW + sum_right_HW) / (n_l_plus_r) if n_l_plus_r > 0 else 0
+            )
+
+            sum_square_error_left_HW = np.sum(
+                [(x - ind_left_HW) ** 2 for x in rel_left_HW]
+            )
+            sum_square_error_right_HW = np.sum(
+                [(x - ind_right_HW) ** 2 for x in rel_right_HW]
+            )
+
+            ind_left_HW_STD = (
+                math.sqrt(sum_square_error_left_HW / (n_l - 1)) if n_l > 1 else 0
+            )
+            ind_right_HW_STD = (
+                math.sqrt(sum_square_error_right_HW / (n_r - 1)) if n_r > 1 else 0
+            )
+            ind_HW_STD = (
+                math.sqrt(
+                    (sum_square_error_left_HW + sum_square_error_right_HW)
+                    / (n_l_plus_r - 1)
+                )
+                if n_l_plus_r > 1
+                else 0
+            )
+
+            # --------------------------------
+            # CROSS_SECTIONNAL OPEN VIEW ANGLE
+            # --------------------------------
+            left_angles = [
+                np.rad2deg(np.arctan(hw)) if not math.isnan(hw) else 0 for hw in left_HW
+            ]
+            right_angles = [
+                np.rad2deg(np.arctan(hw)) if not math.isnan(hw) else 0
+                for hw in right_HW
+            ]
+
+            angles = [
+                180 - gamma_l - gamma_r
+                for gamma_l, gamma_r in zip(left_angles, right_angles)
+            ]
+            ind_csosva = sum(angles) / N
+
+            # ------------------------
+            # TANGENTE Ratio (front+back/OS if setback exists)
+            # ------------------------
+            all_tan = []
+            all_tan_ratio = []
+            for f, b, l, r in zip(front_SB, back_SB, left_OS, right_OS):
+                tan_value = f + b
+                all_tan.append(tan_value)
+                if not math.isnan(l) and not math.isnan(r):
+                    all_tan_ratio.append(tan_value / (l + r))
+
+            # Tan
+            ind_tan = np.sum(all_tan) / N
+            ind_tan_STD = 0
+            if N > 1:
+                ind_tan_STD = math.sqrt(
+                    np.sum([(x - ind_tan) ** 2 for x in all_tan]) / (N - 1)
+                )
+
+            # Tan ratio
+            ind_tan_ratio = 0
+            ind_tan_ratio_STD = 0
+            n_tan_ratio = len(all_tan_ratio)
+            if n_tan_ratio > 0:
+                ind_tan_ratio = np.sum(all_tan_ratio) / n_tan_ratio
+                if n_tan_ratio > 1:
+                    ind_tan_ratio_STD = math.sqrt(
+                        np.sum([(x - ind_tan_ratio) ** 2 for x in all_tan_ratio])
+                        / (n_tan_ratio - 1)
+                    )
+
+            # version de l'indictaur sans horizon (max = sightline_width)
+            (
+                ind_left_par_tot,
+                ind_left_par_rel,
+                ind_right_par_tot,
+                ind_right_par_rel,
+                ind_par_tot,
+                ind_par_rel,
+            ) = self._compute_parallelism_indicators(
+                left_SB,
+                left_SB_count,
+                right_SB,
+                right_SB_count,
+                N,
+                n_l,
+                n_r,
+                max_distance=None,
+            )
+
+            # version de l'indictaur a 15 mètres maximum
+            (
+                ind_left_par_tot_15,
+                ind_left_par_rel_15,
+                ind_right_par_tot_15,
+                ind_right_par_rel_15,
+                ind_par_tot_15,
+                ind_par_rel_15,
+            ) = self._compute_parallelism_indicators(
+                left_SB,
+                left_SB_count,
+                right_SB,
+                right_SB_count,
+                N,
+                n_l,
+                n_r,
+                max_distance=15,
+            )
+
+            # Built frequency
+            ind_left_built_freq = len(set(left_SEQ_SB_ids)) / street_length
+            ind_right_built_freq = len(set(right_SEQ_SB_ids)) / street_length
+            ind_built_freq = (
+                len(set(left_SEQ_SB_ids + right_SEQ_SB_ids)) / street_length
+            )
+
+            # Built coverage
+            ind_left_built_coverage = (
+                np.mean(left_BUILT_COVERAGE) / self.sight_line_width
+            )
+            ind_right_built_coverage = (
+                np.mean(right_BUILT_COVERAGE) / self.sight_line_width
+            )
+            ind_built_coverage = (
+                ind_left_built_coverage + ind_right_built_coverage
+            ) / 2
+
+            # Built category prevvvalence
+
+            values.append(
+                [
+                    street_uid,
+                    N,
+                    n_l,
+                    n_r,
+                    ind_left_OS,
+                    ind_right_OS,
+                    ind_OS,
+                    ind_left_OS_STD,
+                    ind_right_OS_STD,
+                    ind_OS_STD,
+                    ind_left_OS_MAD,
+                    ind_right_OS_MAD,
+                    ind_OS_MAD,
+                    ind_left_OS_med,
+                    ind_right_OS_med,
+                    ind_OS_med,
+                    ind_left_OS_MAD_med,
+                    ind_right_OS_MAD_med,
+                    ind_OS_MAD_med,
+                    ind_left_SB,
+                    ind_right_SB,
+                    ind_SB,
+                    ind_left_SB_STD,
+                    ind_right_SB_STD,
+                    ind_SB_STD,
+                    ind_left_SB_MAD,
+                    ind_right_SB_MAD,
+                    ind_SB_MAD,
+                    ind_left_SB_med,
+                    ind_right_SB_med,
+                    ind_SB_med,
+                    ind_left_SB_MAD_med,
+                    ind_right_SB_MAD_med,
+                    ind_SB_MAD_med,
+                    ind_left_H,
+                    ind_right_H,
+                    ind_H,
+                    ind_left_H_STD,
+                    ind_right_H_STD,
+                    ind_H_STD,
+                    ind_left_HW,
+                    ind_right_HW,
+                    ind_HW,
+                    ind_left_HW_STD,
+                    ind_right_HW_STD,
+                    ind_HW_STD,
+                    ind_csosva,
+                    ind_tan,
+                    ind_tan_STD,
+                    n_tan_ratio,
+                    ind_tan_ratio,
+                    ind_tan_ratio_STD,
+                    ind_par_tot,
+                    ind_par_rel,
+                    ind_left_par_tot,
+                    ind_right_par_tot,
+                    ind_left_par_rel,
+                    ind_right_par_rel,
+                    ind_par_tot_15,
+                    ind_par_rel_15,
+                    ind_left_par_tot_15,
+                    ind_right_par_tot_15,
+                    ind_left_par_rel_15,
+                    ind_right_par_rel_15,
+                    ind_left_built_freq,
+                    ind_right_built_freq,
+                    ind_built_freq,
+                    ind_left_built_coverage,
+                    ind_right_built_coverage,
+                    ind_built_coverage,
+                ]
+            )
+
+        df = pd.DataFrame(
+            values,
+            columns=[
+                "uid",
+                "N",
+                "n_l",
+                "n_r",
+                "left_OS",
+                "right_OS",
+                "OS",
+                "left_OS_STD",
+                "right_OS_STD",
+                "OS_STD",
+                "left_OS_MAD",
+                "right_OS_MAD",
+                "OS_MAD",
+                "left_OS_med",
+                "right_OS_med",
+                "OS_med",
+                "left_OS_MAD_med",
+                "right_OS_MAD_med",
+                "OS_MAD_med",
+                "left_SB",
+                "right_SB",
+                "SB",
+                "left_SB_STD",
+                "right_SB_STD",
+                "SB_STD",
+                "left_SB_MAD",
+                "right_SB_MAD",
+                "SB_MAD",
+                "left_SB_med",
+                "right_SB_med",
+                "SB_med",
+                "left_SB_MAD_med",
+                "right_SB_MAD_med",
+                "SB_MAD_med",
+                "left_H",
+                "right_H",
+                "H",
+                "left_H_STD",
+                "right_H_STD",
+                "H_STD",
+                "left_HW",
+                "right_HW",
+                "HW",
+                "left_HW_STD",
+                "right_HW_STD",
+                "HW_STD",
+                "csosva",
+                "tan",
+                "tan_STD",
+                "n_tan_ratio",
+                "tan_ratio",
+                "tan_ratio_STD",
+                "par_tot",
+                "par_rel",
+                "left_par_tot",
+                "right_par_tot",
+                "left_par_rel",
+                "right_par_rel",
+                "par_tot_15",
+                "par_rel_15",
+                "left_par_tot_15",
+                "right_par_tot_15",
+                "left_par_rel_15",
+                "right_par_rel_15",
+                "left_built_freq",
+                "right_built_freq",
+                "built_freq",
+                "left_built_coverage",
+                "right_built_coverage",
+                "built_coverage",
+            ],
+        ).set_index("uid")
+
+        self.street_indicators = df
+
+    # def compute_building_category_prevalence_indicators(SB_count, SEQ_SB_categories):
+    # TODO: categorical stuff
+    #     sb_sequence_id = 0
+    #     category_total_weight = 0
+    #     category_counters = np.zeros(PARAM_building_categories_count)
+    #     for sb_count in SB_count:
+    #         if sb_count==0:
+    #             continue
+    #         # add sight line contribution relative to snail effect
+    #         sb_weight = 1/sb_count
+    #         category_total_weight += 1
+    #         for i in range(sb_count):
+    #             category_counters[SEQ_SB_categories[sb_sequence_id]]+=sb_weight
+    #             sb_sequence_id+=1
+
+    #     return category_counters, category_total_weight
+
+    # def compute_prevalences(df_sighlines):
+    #     values=[]
+
+    #     for street_uid, row in df_sightlines.iterrows():
+
+    #         left_SEQ_SB_categories=row.left_SEQ_SB_categories
+    #         left_SB_count=row.left_SB_count
+    #         right_SEQ_SB_categories=row.right_SEQ_SB_categories
+    #         right_SB_count=row.right_SB_count
+
+    #         # left right totalizer
+    #         left_category_indicators, left_category_total_weight = compute_building_category_prevalence_indicators(left_SB_count,left_SEQ_SB_categories)
+    #         right_category_indicators, right_category_total_weight = compute_building_category_prevalence_indicators(right_SB_count,right_SEQ_SB_categories)
+
+    #         # global  totalizer
+    #         category_indicators = left_category_indicators+right_category_indicators # numpy #add X+Y = Z wxhere zi=xi+yi
+    #         category_total_weight = left_category_total_weight+right_category_total_weight
+
+    #         left_category_indicators = left_category_indicators/left_category_total_weight if left_category_total_weight!=0 else left_category_indicators
+    #         right_category_indicators = right_category_indicators/right_category_total_weight if right_category_total_weight!=0 else right_category_indicators
+    #         category_indicators =  category_indicators/category_total_weight if category_total_weight!=0 else category_indicators
+
+    #         values.append([street_uid]+list(category_indicators))
+
+    #     columns= ['uid']+[f'building_prevalence_T{clazz}' for clazz in range(PARAM_building_categories_count)]
+    #     df_prevalences = pd.DataFrame(values,columns=columns).set_index('uid')
+
+    #     return df_prevalences
 
 
 def rotate(x, y, xo, yo, theta):  # rotate x,y around xo,yo by theta (rad)
