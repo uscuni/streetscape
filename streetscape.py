@@ -6,7 +6,7 @@ import rtree
 import pandas as pd
 import momepy
 
-from shapely import Point, Polygon, MultiPoint, LineString
+from shapely import Point, Polygon, MultiPoint, LineString, MultiLineString
 
 
 class StreetScape:
@@ -711,6 +711,140 @@ class StreetScape:
         df = df.set_index("uid", drop=False)
 
         return df
+
+    def compute_sigthlines_plot_indicators_one_side(
+        self, sight_line_points, OS_count, SEQ_OS_endpoint
+    ):
+        parcel_SB_count = []
+        parcel_SEQ_SB_ids = []
+        parcel_SEQ_SB = []
+        parcel_SEQ_SB_depth = []
+
+        N = len(sight_line_points)
+        if N == 0:
+            parcel_SB_count = [0 for sight_point in sight_line_points]
+            return [
+                parcel_SB_count,
+                parcel_SEQ_SB_ids,
+                parcel_SEQ_SB,
+                parcel_SEQ_SB_depth,
+            ]
+
+        idx_end_point = 0
+
+        for sight_point, os_count in zip(sight_line_points, OS_count):
+            n_sightlines_touching = 0
+            for i in range(os_count):
+                sight_line_geom = LineString(
+                    [sight_point, SEQ_OS_endpoint[idx_end_point]]
+                )
+                s_pt1 = Point(sight_line_geom.coords[0])
+
+                gdf_items = self.plots.iloc[
+                    self.rtree_parcels.extract_ids(sight_line_geom)
+                ]
+
+                match_distance = (
+                    self.sight_line_width  # set max distance if no polygon intersect
+                )
+                match_id = None
+                match_geom = None
+
+                for i, res in gdf_items.iterrows():
+                    # building geom
+                    geom = res.geometry
+                    geom = geom if isinstance(geom, Polygon) else geom.geoms[0]
+                    contour = LineString(geom.exterior.coords)
+                    isect = sight_line_geom.intersection(contour)
+                    if not isect.is_empty:
+                        if isinstance(isect, Point):
+                            isect = [isect]
+                        elif isinstance(isect, LineString):
+                            isect = [Point(coord) for coord in isect.coords]
+                        elif isinstance(isect, MultiPoint):
+                            isect = [pt for pt in isect.geoms]
+
+                        for pt_sec in isect:
+                            dist = s_pt1.distance(pt_sec)
+                            if dist < match_distance:
+                                match_distance = dist
+                                match_id = res.parcel_id
+                                match_geom = geom
+
+                # ---------------
+                # result in intersightline
+                if match_id is not None:
+                    n_sightlines_touching += 1
+                    parcel_SEQ_SB_ids.append(match_id)
+                    parcel_SEQ_SB.append(match_distance)
+                    # compute depth of plot intersect sighline etendue
+                    if not match_geom.is_valid:
+                        match_geom = match_geom.buffer(0)
+                    isec = match_geom.intersection(
+                        extend_line_end(
+                            sight_line_geom, self.sight_line_plot_depth_extension
+                        )
+                    )
+                    if (not isinstance(isec, LineString)) and (
+                        not isinstance(isec, MultiLineString)
+                    ):
+                        raise Exception("Not allowed: intersection is not of type Line")
+                    parcel_SEQ_SB_depth.append(isec.length)
+
+                # ------- iterate
+                idx_end_point += 1
+
+            parcel_SB_count.append(n_sightlines_touching)
+
+        return [parcel_SB_count, parcel_SEQ_SB_ids, parcel_SEQ_SB, parcel_SEQ_SB_depth]
+
+    def compute_plot_indicators(
+        self, plots: gpd.GeoDataFrame, sight_line_plot_depth_extension: float = 300
+    ):
+        self.sight_line_plot_depth_extension = sight_line_plot_depth_extension
+
+        self.rtree_parcels = RtreeIndex("parcels", plots)
+        plots = plots.copy()
+        plots["parcel_id"] = np.arange(len(plots))
+        self.plots = plots
+
+        values = []
+
+        for uid, row in self.sightline_df().iterrows():
+            sight_line_values = [uid]
+
+            side_values = self.compute_sigthlines_plot_indicators_one_side(
+                row.sight_line_points, row.left_OS_count, row.left_SEQ_OS_endpoints
+            )
+            sight_line_values += side_values
+
+            side_values = self.compute_sigthlines_plot_indicators_one_side(
+                row.sight_line_points, row.right_OS_count, row.right_SEQ_OS_endpoints
+            )
+            sight_line_values += side_values
+
+            values.append(sight_line_values)
+
+        self.plot_indicators = values
+
+    def plot_df(self):
+        df_results = pd.DataFrame(
+            self.plot_indicators,
+            columns=[
+                "uid",
+                "left_parcel_SB_count",
+                "left_parcel_SEQ_SB_ids",
+                "left_parcel_SEQ_SB",
+                "left_parcel_SEQ_SB_depth",
+                "right_parcel_SB_count",
+                "right_parcel_SEQ_SB_ids",
+                "right_parcel_SEQ_SB",
+                "right_parcel_SEQ_SB_depth",
+            ],
+        )
+        df_results = df_results.set_index("uid", drop=False)
+
+        return df_results
 
 
 def rotate(x, y, xo, yo, theta):  # rotate x,y around xo,yo by theta (rad)
