@@ -670,16 +670,17 @@ class StreetScape:
     def compute_sightline_indicators(self):
         values = []
 
-        gdf_streets_subset = self.streets
-
-        for street_uid, street_row in gdf_streets_subset.iterrows():
+        for street_uid, street_row in self.streets.iterrows():
             indicators, gdf_sight_lines = self._compute_sigthlines_indicators(
                 street_row
             )
             values.append(indicators)
 
+        self.sightline_indicators = values
+
+    def sightline_df(self):
         df = pd.DataFrame(
-            values,
+            self.sightline_indicators,
             columns=[
                 "uid",
                 "sight_line_points",
@@ -709,7 +710,7 @@ class StreetScape:
         )
         df = df.set_index("uid", drop=False)
 
-        self.sightline_df = df
+        return df
 
 
 def rotate(x, y, xo, yo, theta):  # rotate x,y around xo,yo by theta (rad)
