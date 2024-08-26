@@ -4,6 +4,12 @@ Code by University of Cote'd Azur - Alessandro Araldi & Giovanni Fusco
 
 Will make its way to pysal/momepy.
 
+## Run with pixi
+
+```sh
+pixi run jupyter lab
+```
+
 ## Notes
 
 Work is now being made in [pysal/momepy fork](https://github.com/novotny-marek/momepy).

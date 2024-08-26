@@ -4,4 +4,6 @@ results/
 my_results/
 tests.ipynb
 tmp/*
-.vscode/*
+.vscode/*# pixi environments
+.pixi
+*.egg-info
