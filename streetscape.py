@@ -141,8 +141,6 @@ class Streetscape:
 
         FIELD_geometry = 0
         FIELD_uid = 1
-        FIELD_dist = 2
-        FIELD_type = 3
 
         ################### SECOND PART : TANGENT SIGHTLINES #################################
 
@@ -248,7 +246,7 @@ class Streetscape:
             ################### THIRD PART: SIGHTLINE ENRICHMENT #################################
 
             # Populate lost space between consecutive sight lines with high deviation (>angle_tolerance)
-            if not previous_sigh_line_left is None:
+            if previous_sigh_line_left is not None:
                 for this_line, prev_line, side in [
                     (sight_line_left, previous_sigh_line_left, self.SIGHTLINE_LEFT),
                     (sight_line_right, previous_sigh_line_right, self.SIGHTLINE_RIGHT),
@@ -317,7 +315,6 @@ class Streetscape:
             previous_sigh_line_right = sight_line_right
 
             sightline_index += 1
-            prev_distance = distance
 
         # ======================================================================================
         # SPECIFIC ENRICHMENT FOR SIGHTPOINTS corresponding to DEAD ENDs
@@ -891,7 +888,7 @@ class Streetscape:
         end = road_row.sl_end  # Point z
         slp = road_row.sl_points  # Multipoint z
 
-        if slp == None:
+        if slp is None:
             # Case when there is no sight line point (e.g. when the road is too short)
             # just computes slope between start and end
             if start.z == self.NODATA_RASTER or end.z == self.NODATA_RASTER:
@@ -1116,7 +1113,6 @@ class Streetscape:
 
     def compute_street_indicators(self):
         values = []
-        nb_streets = len(self.sightline_indicators)
 
         for street_uid, row in self.sightline_indicators.iterrows():
             street_length = row.street_length
@@ -1127,7 +1123,6 @@ class Streetscape:
             left_SB = row.left_SB
             left_H = row.left_H
             left_HW = row.left_HW
-            right_OS_count = row.right_OS_count
             right_OS = row.right_OS
             right_SB_count = row.right_SB_count
             right_SB = row.right_SB
@@ -1135,11 +1130,9 @@ class Streetscape:
             right_HW = row.right_HW
 
             left_BUILT_COVERAGE = row.left_BUILT_COVERAGE
-            left_SEQ_SB_categories = row.left_SEQ_SB_categories
             left_SEQ_SB_ids = row.left_SEQ_SB_ids
 
             right_BUILT_COVERAGE = row.right_BUILT_COVERAGE
-            right_SEQ_SB_categories = row.right_SEQ_SB_categories
             right_SEQ_SB_ids = row.right_SEQ_SB_ids
 
             front_SB = row.front_SB
@@ -1159,7 +1152,7 @@ class Streetscape:
             ind_right_OS = sum_right_OS / N
             ind_OS = ind_left_OS + ind_right_OS  # ==(left_OS+right_OS)/N
 
-            full_OS = [l + r for l, r in zip(left_OS, right_OS)]
+            full_OS = [le + r for le, r in zip(left_OS, right_OS)]
             # mediane >> med
             ind_left_OS_med = np.median(left_OS)
             ind_right_OS_med = np.median(right_OS)
@@ -1378,11 +1371,11 @@ class Streetscape:
             # ------------------------
             all_tan = []
             all_tan_ratio = []
-            for f, b, l, r in zip(front_SB, back_SB, left_OS, right_OS):
+            for f, b, lf, r in zip(front_SB, back_SB, left_OS, right_OS):
                 tan_value = f + b
                 all_tan.append(tan_value)
-                if not math.isnan(l) and not math.isnan(r):
-                    all_tan_ratio.append(tan_value / (l + r))
+                if not math.isnan(lf) and not math.isnan(r):
+                    all_tan_ratio.append(tan_value / (lf + r))
 
             # Tan
             ind_tan = np.sum(all_tan) / N
