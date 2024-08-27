@@ -6,6 +6,7 @@ import rtree
 import pandas as pd
 import momepy
 import shapely
+import xvec  # noqa: F401
 
 from shapely import Point, Polygon, MultiPoint, LineString, MultiLineString
 
@@ -77,12 +78,14 @@ class Streetscape:
         streets = streets.copy()
         streets.geometry = streets.force_2d()
 
-        nodes, edges = momepy.nx_to_gdf(momepy.node_degree(momepy.gdf_to_nx(streets)))
+        nodes, edges = momepy.nx_to_gdf(
+            momepy.node_degree(momepy.gdf_to_nx(streets, preserve_index=True))
+        )
         edges["n1_degree"] = nodes.degree.loc[edges.node_start].values
         edges["n2_degree"] = nodes.degree.loc[edges.node_end].values
         edges["dead_end_left"] = edges["n1_degree"] == 1
         edges["dead_end_right"] = edges["n2_degree"] == 1
-        edges["uid"] = np.arange(len(edges))
+        edges["uid"] = edges.index
 
         self.streets = edges
 
@@ -720,7 +723,7 @@ class Streetscape:
                 "right_SEQ_OS_endpoints",
             ],
         )
-        df = df.set_index("uid", drop=False)
+        df = df.set_index("uid")
 
         df["nodes_degree_1"] = self.streets.apply(
             lambda row: (
@@ -750,7 +753,7 @@ class Streetscape:
         # df["street_width"] = self.streets.street_width  # TODO: this comes as an attribute?
         df["windingness"] = 1 - momepy.linearity(self.streets)
 
-        self.sightline_indicators = df
+        self._sightline_indicators = df
 
     def _compute_sigthlines_plot_indicators_one_side(
         self, sight_line_points, OS_count, SEQ_OS_endpoint
@@ -850,7 +853,7 @@ class Streetscape:
 
         values = []
 
-        for uid, row in self.sightline_indicators.iterrows():
+        for uid, row in self._sightline_indicators.iterrows():
             sight_line_values = [uid]
 
             side_values = self._compute_sigthlines_plot_indicators_one_side(
@@ -881,7 +884,7 @@ class Streetscape:
         )
         df = df.set_index("uid", drop=False)
 
-        self.plot_indicators = df
+        self._plot_indicators = df
 
     def _compute_slope(self, road_row):
         start = road_row.sl_start  # Point z
@@ -978,7 +981,7 @@ class Streetscape:
 
         z_points_list = []
 
-        for row in self.sightline_indicators["sight_line_points"].apply(
+        for row in self._sightline_indicators["sight_line_points"].apply(
             lambda x: MultiPoint(x) if x else None
         ):
             if row is not None:
@@ -1114,7 +1117,7 @@ class Streetscape:
     def compute_street_indicators(self):
         values = []
 
-        for street_uid, row in self.sightline_indicators.iterrows():
+        for street_uid, row in self._sightline_indicators.iterrows():
             street_length = row.street_length
 
             left_OS_count = row.left_OS_count
@@ -1629,7 +1632,7 @@ class Streetscape:
     def compute_prevalences(self):
         values = []
 
-        for street_uid, row in self.sightline_indicators.iterrows():
+        for street_uid, row in self._sightline_indicators.iterrows():
             left_SEQ_SB_categories = row.left_SEQ_SB_categories
             left_SB_count = row.left_SB_count
             right_SEQ_SB_categories = row.right_SEQ_SB_categories
