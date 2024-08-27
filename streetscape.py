@@ -85,17 +85,19 @@ class Streetscape:
         edges["n2_degree"] = nodes.degree.loc[edges.node_end].values
         edges["dead_end_left"] = edges["n1_degree"] == 1
         edges["dead_end_right"] = edges["n2_degree"] == 1
-        edges["uid"] = edges.index
+        edges["street_index"] = edges.index
 
         self.streets = edges
 
         buildings = buildings.copy()
-        buildings["uid"] = np.arange(len(buildings))
+        buildings["street_index"] = np.arange(len(buildings))
         self.buildings = buildings
 
         self.rtree_streets = RtreeIndex("streets", self.streets)
 
         self.rtree_buildings = RtreeIndex("buildings", self.buildings)
+
+        self._compute_sightline_indicators_full()
 
     # return empty list if no sight line could be build du to total road length
     def _compute_sight_lines(
@@ -398,7 +400,7 @@ class Streetscape:
         )
 
     def _compute_sigthlines_indicators(self, street_row, optimize_on=True):
-        street_uid = street_row.uid
+        street_uid = street_row.street_index
         street_geom = street_row.geometry
 
         gdf_sight_lines, sight_lines_points, results_sight_points_distances = (
@@ -406,8 +408,6 @@ class Streetscape:
                 street_geom, street_row.dead_end_left, street_row.dead_end_right
             )
         )
-
-        # display(gdf_sight_lines)
 
         # per street sightpoints indicators
         current_street_uid = street_uid
@@ -557,7 +557,7 @@ class Streetscape:
                             dist = s_pt1.distance(pt_sec)
                             if dist < match_sl_distance:
                                 match_sl_distance = dist
-                                match_sl_building_id = res.uid
+                                match_sl_building_id = res.street_index
                                 match_sl_building_height = (
                                     res[self.height_col] if self.height_col else np.nan
                                 )
@@ -685,7 +685,7 @@ class Streetscape:
             right_SEQ_sight_lines_end_points,
         ], gdf_sight_lines
 
-    def compute_sightline_indicators(self):
+    def _compute_sightline_indicators_full(self):
         values = []
 
         for street_uid, street_row in self.streets.iterrows():
@@ -697,7 +697,7 @@ class Streetscape:
         df = pd.DataFrame(
             values,
             columns=[
-                "uid",
+                "street_index",
                 "sight_line_points",
                 "left_OS_count",
                 "left_OS",
@@ -723,7 +723,7 @@ class Streetscape:
                 "right_SEQ_OS_endpoints",
             ],
         )
-        df = df.set_index("uid")
+        df = df.set_index("street_index")
 
         df["nodes_degree_1"] = self.streets.apply(
             lambda row: (
@@ -765,7 +765,7 @@ class Streetscape:
 
         N = len(sight_line_points)
         if N == 0:
-            parcel_SB_count = [0 for sight_point in sight_line_points]
+            parcel_SB_count = [0] * N
             return [
                 parcel_SB_count,
                 parcel_SEQ_SB_ids,
@@ -841,7 +841,7 @@ class Streetscape:
 
         return [parcel_SB_count, parcel_SEQ_SB_ids, parcel_SEQ_SB, parcel_SEQ_SB_depth]
 
-    def compute_plot_indicators(
+    def compute_plots(
         self, plots: gpd.GeoDataFrame, sight_line_plot_depth_extension: float = 300
     ):
         self.sight_line_plot_depth_extension = sight_line_plot_depth_extension
@@ -871,7 +871,7 @@ class Streetscape:
         df = pd.DataFrame(
             values,
             columns=[
-                "uid",
+                "street_index",
                 "left_parcel_SB_count",
                 "left_parcel_SEQ_SB_ids",
                 "left_parcel_SEQ_SB",
@@ -882,7 +882,7 @@ class Streetscape:
                 "right_parcel_SEQ_SB_depth",
             ],
         )
-        df = df.set_index("uid", drop=False)
+        df = df.set_index("street_index")
 
         self._plot_indicators = df
 
@@ -958,7 +958,9 @@ class Streetscape:
             raster.drop_vars("spatial_ref")
             .xvec.extract_points(points=start_points, x_coords="x", y_coords="y")
             .xvec.to_geopandas()
-            .rename(columns={0: "z"})
+        )
+        z_start = z_start.rename(
+            columns={k: "z" for k in z_start.columns.drop("geometry")}
         )
 
         # Append z values to points
@@ -971,8 +973,8 @@ class Streetscape:
             raster.drop_vars("spatial_ref")
             .xvec.extract_points(points=end_points, x_coords="x", y_coords="y")
             .xvec.to_geopandas()
-            .rename(columns={0: "z"})
         )
+        z_end = z_end.rename(columns={k: "z" for k in z_end.columns.drop("geometry")})
 
         # Append z values to points
         z_end["end_point_3d"] = shapely.points(
@@ -991,7 +993,9 @@ class Streetscape:
                     raster.drop_vars("spatial_ref")
                     .xvec.extract_points(points=points, x_coords="x", y_coords="y")
                     .xvec.to_geopandas()
-                    .rename(columns={0: "z"})
+                )
+                z_points = z_points.rename(
+                    columns={k: "z" for k in z_points.columns.drop("geometry")}
                 )
 
                 z_points["geometry"] = shapely.points(
@@ -1114,7 +1118,7 @@ class Streetscape:
             ind_par_rel,
         )
 
-    def compute_street_indicators(self):
+    def street_level(self):
         values = []
 
         for street_uid, row in self._sightline_indicators.iterrows():
@@ -1533,85 +1537,106 @@ class Streetscape:
                 ]
             )
 
-        df = pd.DataFrame(
-            values,
-            columns=[
-                "uid",
-                "N",
-                "n_l",
-                "n_r",
-                "left_OS",
-                "right_OS",
-                "OS",
-                "left_OS_STD",
-                "right_OS_STD",
-                "OS_STD",
-                "left_OS_MAD",
-                "right_OS_MAD",
-                "OS_MAD",
-                "left_OS_med",
-                "right_OS_med",
-                "OS_med",
-                "left_OS_MAD_med",
-                "right_OS_MAD_med",
-                "OS_MAD_med",
-                "left_SB",
-                "right_SB",
-                "SB",
-                "left_SB_STD",
-                "right_SB_STD",
-                "SB_STD",
-                "left_SB_MAD",
-                "right_SB_MAD",
-                "SB_MAD",
-                "left_SB_med",
-                "right_SB_med",
-                "SB_med",
-                "left_SB_MAD_med",
-                "right_SB_MAD_med",
-                "SB_MAD_med",
-                "left_H",
-                "right_H",
-                "H",
-                "left_H_STD",
-                "right_H_STD",
-                "H_STD",
-                "left_HW",
-                "right_HW",
-                "HW",
-                "left_HW_STD",
-                "right_HW_STD",
-                "HW_STD",
-                "csosva",
-                "tan",
-                "tan_STD",
-                "n_tan_ratio",
-                "tan_ratio",
-                "tan_ratio_STD",
-                "par_tot",
-                "par_rel",
-                "left_par_tot",
-                "right_par_tot",
-                "left_par_rel",
-                "right_par_rel",
-                "par_tot_15",
-                "par_rel_15",
-                "left_par_tot_15",
-                "right_par_tot_15",
-                "left_par_rel_15",
-                "right_par_rel_15",
-                "left_built_freq",
-                "right_built_freq",
-                "built_freq",
-                "left_built_coverage",
-                "right_built_coverage",
-                "built_coverage",
-            ],
-        ).set_index("uid")
+        df = (
+            pd.DataFrame(
+                values,
+                columns=[
+                    "street_index",
+                    "N",
+                    "n_l",
+                    "n_r",
+                    "left_OS",
+                    "right_OS",
+                    "OS",
+                    "left_OS_STD",
+                    "right_OS_STD",
+                    "OS_STD",
+                    "left_OS_MAD",
+                    "right_OS_MAD",
+                    "OS_MAD",
+                    "left_OS_med",
+                    "right_OS_med",
+                    "OS_med",
+                    "left_OS_MAD_med",
+                    "right_OS_MAD_med",
+                    "OS_MAD_med",
+                    "left_SB",
+                    "right_SB",
+                    "SB",
+                    "left_SB_STD",
+                    "right_SB_STD",
+                    "SB_STD",
+                    "left_SB_MAD",
+                    "right_SB_MAD",
+                    "SB_MAD",
+                    "left_SB_med",
+                    "right_SB_med",
+                    "SB_med",
+                    "left_SB_MAD_med",
+                    "right_SB_MAD_med",
+                    "SB_MAD_med",
+                    "left_H",
+                    "right_H",
+                    "H",
+                    "left_H_STD",
+                    "right_H_STD",
+                    "H_STD",
+                    "left_HW",
+                    "right_HW",
+                    "HW",
+                    "left_HW_STD",
+                    "right_HW_STD",
+                    "HW_STD",
+                    "csosva",
+                    "tan",
+                    "tan_STD",
+                    "n_tan_ratio",
+                    "tan_ratio",
+                    "tan_ratio_STD",
+                    "par_tot",
+                    "par_rel",
+                    "left_par_tot",
+                    "right_par_tot",
+                    "left_par_rel",
+                    "right_par_rel",
+                    "par_tot_15",
+                    "par_rel_15",
+                    "left_par_tot_15",
+                    "right_par_tot_15",
+                    "left_par_rel_15",
+                    "right_par_rel_15",
+                    "left_built_freq",
+                    "right_built_freq",
+                    "built_freq",
+                    "left_built_coverage",
+                    "right_built_coverage",
+                    "built_coverage",
+                ],
+            )
+            .set_index("street_index")
+            .join(
+                self._sightline_indicators[
+                    [
+                        "nodes_degree_1",
+                        "nodes_degree_4",
+                        "nodes_degree_3_5_plus",
+                        "street_length",
+                        "windingness",
+                    ]
+                ]
+            )
+        )
 
-        self.street_indicators = df
+        if self.category_col:
+            self._compute_prevalences()
+            df = df.join(self.prevalences)
 
-    def compute_building_category_prevalence_indicators(
+        if hasattr(self, "slope"):
+            df = df.join(self.slope)
+
+        return df.set_geometry(self.streets.geometry)
+
+    def _compute_building_category_prevalence_indicators(
         self, SB_count, SEQ_SB_categories
     ):
         sb_sequence_id = 0
@@ -1629,7 +1654,7 @@ class Streetscape:
 
         return category_counters, category_total_weight
 
-    def compute_prevalences(self):
+    def _compute_prevalences(self):
         values = []
 
         for street_uid, row in self._sightline_indicators.iterrows():
@@ -1640,12 +1665,12 @@ class Streetscape:
 
             # left right totalizer
             left_category_indicators, left_category_total_weight = (
-                self.compute_building_category_prevalence_indicators(
+                self._compute_building_category_prevalence_indicators(
                     left_SB_count, left_SEQ_SB_categories
                 )
             )
             right_category_indicators, right_category_total_weight = (
-                self.compute_building_category_prevalence_indicators(
+                self._compute_building_category_prevalence_indicators(
                     right_SB_count, right_SEQ_SB_categories
                 )
             )
@@ -1676,11 +1701,48 @@ class Streetscape:
 
             values.append([street_uid] + list(category_indicators))
 
-        columns = ["uid"] + [
+        columns = ["street_index"] + [
             f"building_prevalence[{clazz}]"
             for clazz in range(self.building_categories_count)
         ]
-        self.prevalences = pd.DataFrame(values, columns=columns).set_index("uid")
+        self.prevalences = pd.DataFrame(values, columns=columns).set_index(
+            "street_index"
+        )
+
+    def point_level(self):
+        # TODO: compute left-right averages/sums per point
+
+        # TODO 2: figure out how to include plot-based indicators as each point may have
+        # more then one value in self._plot_indicators. Probably unpacking all the
+        # values based on counts and getting average per point when there's more?
+        point_data = self._sightline_indicators[
+            [
+                "sight_line_points",
+                "left_OS_count",
+                "left_OS",
+                "left_SB_count",
+                "left_SB",
+                "left_H",
+                "left_HW",
+                "left_BUILT_COVERAGE",
+                "right_OS_count",
+                "right_OS",
+                "right_SB_count",
+                "right_SB",
+                "right_H",
+                "right_HW",
+                "right_BUILT_COVERAGE",
+                "front_SB",
+                "back_SB",
+            ]
+        ]
+        point_data = point_data.explode(point_data.columns.tolist())
+        for col in point_data.columns[1:]:
+            point_data[col] = pd.to_numeric(point_data[col])
+
+        return point_data.set_geometry(
+            "sight_line_points", crs=self.streets.crs
+        ).rename_geometry("geometry")
 
 
 def rotate(x, y, xo, yo, theta):  # rotate x,y around xo,yo by theta (rad)
