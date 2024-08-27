@@ -20,7 +20,8 @@ class Streetscape:
         sight_line_spacing: float = 3,
         sight_line_junction_size: float = 0.5,
         sight_line_angle_tolerance: float = 5,
-        # default_street_width: float = 3,
+        height_col: str | None = None,
+        category_col: str | None = None,
     ) -> None:
         """_summary_
 
@@ -43,6 +44,10 @@ class Streetscape:
             _description_, by default 0.5
         sight_line_angle_tolerance : float, optional
             _description_, by default 5
+        height_col
+        category_col : str, optional
+            name of a column of the buildings DataFrame containing the information
+            about the building category encoded as integer labels.
 
 
         """
@@ -51,6 +56,11 @@ class Streetscape:
         self.sight_line_spacing = sight_line_spacing
         self.sight_line_junction_size = sight_line_junction_size
         self.sight_line_angle_tolerance = sight_line_angle_tolerance
+        self.height_col = height_col
+        self.category_col = category_col
+        self.building_categories_count = (
+            buildings[category_col].nunique() if category_col else 0
+        )
 
         self.SIGHTLINE_LEFT = 0
         self.SIGHTLINE_RIGHT = 1
@@ -78,14 +88,13 @@ class Streetscape:
 
         buildings = buildings.copy()
         buildings["uid"] = np.arange(len(buildings))
-        # TODO process building heights
         self.buildings = buildings
 
         self.rtree_streets = RtreeIndex("streets", self.streets)
 
         self.rtree_buildings = RtreeIndex("buildings", self.buildings)
 
-    # return None if no sight line could be build du to total road length
+    # return empty list if no sight line could be build du to total road length
     def _compute_sight_lines(
         self,
         line: LineString,
@@ -100,7 +109,7 @@ class Streetscape:
         remaining_length = line_length - 2 * self.sight_line_junction_size
         if remaining_length < self.sight_line_spacing:
             # no sight line
-            return None, None, None
+            return [], [], []
 
         distances = [self.sight_line_junction_size]
         nb_inter_nodes = int(math.floor(remaining_length / self.sight_line_spacing))
@@ -549,8 +558,14 @@ class Streetscape:
                             if dist < match_sl_distance:
                                 match_sl_distance = dist
                                 match_sl_building_id = res.uid
-                                match_sl_building_height = 10  # TODO: process heights
-                                match_sl_building_category = 1  # TODO: process category
+                                match_sl_building_height = (
+                                    res[self.height_col] if self.height_col else np.nan
+                                )
+                                match_sl_building_category = (
+                                    res[self.category_col]
+                                    if self.category_col
+                                    else None
+                                )
 
                         # coverage ratio between sight line and candidate building (geom: building geom)
                         _coverage_isec = sight_line_geom.intersection(geom)
@@ -1600,51 +1615,76 @@ class Streetscape:
 
         self.street_indicators = df
 
-    # def compute_building_category_prevalence_indicators(SB_count, SEQ_SB_categories):
-    # TODO: categorical stuff
-    #     sb_sequence_id = 0
-    #     category_total_weight = 0
-    #     category_counters = np.zeros(PARAM_building_categories_count)
-    #     for sb_count in SB_count:
-    #         if sb_count==0:
-    #             continue
-    #         # add sight line contribution relative to snail effect
-    #         sb_weight = 1/sb_count
-    #         category_total_weight += 1
-    #         for i in range(sb_count):
-    #             category_counters[SEQ_SB_categories[sb_sequence_id]]+=sb_weight
-    #             sb_sequence_id+=1
+    def compute_building_category_prevalence_indicators(
+        self, SB_count, SEQ_SB_categories
+    ):
+        sb_sequence_id = 0
+        category_total_weight = 0
+        category_counters = np.zeros(self.building_categories_count)
+        for sb_count in SB_count:
+            if sb_count == 0:
+                continue
+            # add sight line contribution relative to snail effect
+            sb_weight = 1 / sb_count
+            category_total_weight += 1
+            for i in range(sb_count):
+                category_counters[SEQ_SB_categories[sb_sequence_id]] += sb_weight
+                sb_sequence_id += 1
 
-    #     return category_counters, category_total_weight
+        return category_counters, category_total_weight
 
-    # def compute_prevalences(df_sighlines):
-    #     values=[]
+    def compute_prevalences(self):
+        values = []
 
-    #     for street_uid, row in df_sightlines.iterrows():
+        for street_uid, row in self.sightline_indicators.iterrows():
+            left_SEQ_SB_categories = row.left_SEQ_SB_categories
+            left_SB_count = row.left_SB_count
+            right_SEQ_SB_categories = row.right_SEQ_SB_categories
+            right_SB_count = row.right_SB_count
 
-    #         left_SEQ_SB_categories=row.left_SEQ_SB_categories
-    #         left_SB_count=row.left_SB_count
-    #         right_SEQ_SB_categories=row.right_SEQ_SB_categories
-    #         right_SB_count=row.right_SB_count
+            # left right totalizer
+            left_category_indicators, left_category_total_weight = (
+                self.compute_building_category_prevalence_indicators(
+                    left_SB_count, left_SEQ_SB_categories
+                )
+            )
+            right_category_indicators, right_category_total_weight = (
+                self.compute_building_category_prevalence_indicators(
+                    right_SB_count, right_SEQ_SB_categories
+                )
+            )
 
-    #         # left right totalizer
-    #         left_category_indicators, left_category_total_weight = compute_building_category_prevalence_indicators(left_SB_count,left_SEQ_SB_categories)
-    #         right_category_indicators, right_category_total_weight = compute_building_category_prevalence_indicators(right_SB_count,right_SEQ_SB_categories)
+            # global  totalizer
+            category_indicators = (
+                left_category_indicators + right_category_indicators
+            )  # numpy #add X+Y = Z wxhere zi=xi+yi
+            category_total_weight = (
+                left_category_total_weight + right_category_total_weight
+            )
 
-    #         # global  totalizer
-    #         category_indicators = left_category_indicators+right_category_indicators # numpy #add X+Y = Z wxhere zi=xi+yi
-    #         category_total_weight = left_category_total_weight+right_category_total_weight
+            left_category_indicators = (
+                left_category_indicators / left_category_total_weight
+                if left_category_total_weight != 0
+                else left_category_indicators
+            )
+            right_category_indicators = (
+                right_category_indicators / right_category_total_weight
+                if right_category_total_weight != 0
+                else right_category_indicators
+            )
+            category_indicators = (
+                category_indicators / category_total_weight
+                if category_total_weight != 0
+                else category_indicators
+            )
 
-    #         left_category_indicators = left_category_indicators/left_category_total_weight if left_category_total_weight!=0 else left_category_indicators
-    #         right_category_indicators = right_category_indicators/right_category_total_weight if right_category_total_weight!=0 else right_category_indicators
-    #         category_indicators =  category_indicators/category_total_weight if category_total_weight!=0 else category_indicators
+            values.append([street_uid] + list(category_indicators))
 
-    #         values.append([street_uid]+list(category_indicators))
-
-    #     columns= ['uid']+[f'building_prevalence_T{clazz}' for clazz in range(PARAM_building_categories_count)]
-    #     df_prevalences = pd.DataFrame(values,columns=columns).set_index('uid')
-
-    #     return df_prevalences
+        columns = ["uid"] + [
+            f"building_prevalence[{clazz}]"
+            for clazz in range(self.building_categories_count)
+        ]
+        self.prevalences = pd.DataFrame(values, columns=columns).set_index("uid")
 
 
 def rotate(x, y, xo, yo, theta):  # rotate x,y around xo,yo by theta (rad)
