@@ -1,4 +1,5 @@
 import math
+import warnings
 
 import geopandas as gpd
 import numpy as np
@@ -614,9 +615,9 @@ class Streetscape:
             left_OS_count = left_sl_count
             left_OS = left_sl_distance_total / left_OS_count
             left_SB_count = left_sl_building_count
-            left_SB = math.nan
-            left_H = math.nan
-            left_HW = math.nan
+            left_SB = np.nan
+            left_H = np.nan
+            left_HW = np.nan
             if left_SB_count != 0:
                 left_SB = left_sl_building_sb_total / left_SB_count
                 left_H = left_sl_building_sb_height_total / left_SB_count
@@ -627,9 +628,9 @@ class Streetscape:
             right_OS_count = right_sl_count
             right_OS = right_sl_distance_total / right_OS_count
             right_SB_count = right_sl_building_count
-            right_SB = math.nan
-            right_H = math.nan
-            right_HW = math.nan
+            right_SB = np.nan
+            right_H = np.nan
+            right_HW = np.nan
             if right_SB_count != 0:
                 right_SB = right_sl_building_sb_total / right_SB_count
                 right_H = right_sl_building_sb_height_total / right_SB_count
@@ -908,21 +909,21 @@ class Streetscape:
                         street_uid,
                         0,
                         0,  # np_l, np_r
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
-                        math.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        np.nan,
                     ]
                 )
                 continue
@@ -1289,17 +1290,17 @@ class Streetscape:
         parallel_left_total = sum(parallel_left_factors)
         parallel_right_total = sum(parallel_right_factors)
 
-        ind_left_par_tot = parallel_left_total / (N - 1) if N > 1 else math.nan
-        ind_left_par_rel = parallel_left_total / (n_l - 1) if n_l > 1 else math.nan
+        ind_left_par_tot = parallel_left_total / (N - 1) if N > 1 else np.nan
+        ind_left_par_rel = parallel_left_total / (n_l - 1) if n_l > 1 else np.nan
 
-        ind_right_par_tot = parallel_right_total / (N - 1) if N > 1 else math.nan
-        ind_right_par_rel = parallel_right_total / (n_r - 1) if n_r > 1 else math.nan
+        ind_right_par_tot = parallel_right_total / (N - 1) if N > 1 else np.nan
+        ind_right_par_rel = parallel_right_total / (n_r - 1) if n_r > 1 else np.nan
 
-        ind_par_tot = math.nan
+        ind_par_tot = np.nan
         if N > 1:
             ind_par_tot = (parallel_left_total + parallel_right_total) / (2 * N - 2)
 
-        ind_par_rel = math.nan
+        ind_par_rel = np.nan
         if n_l > 1 or n_r > 1:
             ind_par_rel = (parallel_left_total + parallel_right_total) / (
                 max(1, n_l) + max(1, n_r) - 2
@@ -1910,9 +1911,6 @@ class Streetscape:
         )
 
     def point_level(self):
-        # TODO: figure out how to include plot-based indicators as each point may have
-        # more then one value in self._plot_indicators. Probably unpacking all the
-        # values based on counts and getting average per point when there's more?
         point_data = self._sightline_indicators[
             [
                 "sightline_points",
@@ -1938,6 +1936,60 @@ class Streetscape:
         for col in point_data.columns[1:]:
             point_data[col] = pd.to_numeric(point_data[col])
 
+        # process parcel data
+        left_parcel_SEQ_SB = []
+        left_parcel_SEQ_SB_depth = []
+        right_parcel_SEQ_SB = []
+        right_parcel_SEQ_SB_depth = []
+
+        # we occasionally have more sightlines per point, so we need to average values
+        for row in self._plot_indicators.itertuples():
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", "Mean of empty slice", RuntimeWarning)
+                left_inds = np.cumsum(row.left_parcel_SB_count)[:-1]
+                left_parcel_SEQ_SB.append(
+                    [np.nanmean(x) for x in np.split(row.left_parcel_SEQ_SB, left_inds)]
+                )
+                left_parcel_SEQ_SB_depth.append(
+                    [
+                        np.nanmean(x)
+                        for x in np.split(row.left_parcel_SEQ_SB_depth, left_inds)
+                    ]
+                )
+
+                right_inds = np.cumsum(row.right_parcel_SB_count)[:-1]
+                right_parcel_SEQ_SB.append(
+                    [
+                        np.nanmean(x)
+                        for x in np.split(row.right_parcel_SEQ_SB, right_inds)
+                    ]
+                )
+                right_parcel_SEQ_SB_depth.append(
+                    [
+                        np.nanmean(x)
+                        for x in np.split(row.right_parcel_SEQ_SB_depth, right_inds)
+                    ]
+                )
+
+        point_parcel_data = pd.DataFrame(
+            {
+                "left_plot_SEQ_SB": left_parcel_SEQ_SB,
+                "left_plot_SEQ_SB_depth": left_parcel_SEQ_SB_depth,
+                "right_plot_SEQ_SB": right_parcel_SEQ_SB,
+                "right_plot_SEQ_SB_depth": right_parcel_SEQ_SB_depth,
+            },
+            index=self._plot_indicators.index,
+        )
+        point_data = pd.concat(
+            [
+                point_data,
+                point_parcel_data.explode(point_parcel_data.columns.tolist()).astype(
+                    float
+                ),
+            ],
+            axis=1,
+        )
+
         for ind in [
             "OS_count",
             "OS",
@@ -1946,6 +1998,8 @@ class Streetscape:
             "H",
             "HW",
             "BUILT_COVERAGE",
+            "plot_SEQ_SB",
+            "plot_SEQ_SB_depth",
         ]:
             if "count" in ind:
                 sums = point_data[[f"left_{ind}", f"right_{ind}"]].sum(axis=1)
