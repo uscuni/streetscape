@@ -120,7 +120,11 @@ class Streetscape:
         remaining_length = line_length - 2 * self.intersection_offset
         if remaining_length < self.sightline_spacing:
             # no sight line
-            return [], [], []
+            return (
+                gpd.GeoDataFrame(columns=["geometry", "point_id", "sight_type"]),
+                [],
+                [],
+            )
 
         distances = [self.intersection_offset]
         nb_inter_nodes = int(math.floor(remaining_length / self.sightline_spacing))
