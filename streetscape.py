@@ -16,34 +16,39 @@ class Streetscape:
         self,
         streets: gpd.GeoDataFrame,
         buildings: gpd.GeoDataFrame,
-        sight_line_width: float = 50,
-        tan_line_width: float = 300,
-        sight_line_spacing: float = 3,
-        sight_line_junction_size: float = 0.5,
-        sight_line_angle_tolerance: float = 5,
+        sightline_length: float = 50,
+        tangent_length: float = 300,
+        sightline_spacing: float = 3,
+        intersection_offset: float = 0.5,
+        angle_tolerance: float = 5,
         height_col: str | None = None,
         category_col: str | None = None,
     ) -> None:
-        """_summary_
+        """Streetscape analysis based on sightlines
 
-        1. init
-        2. compute_sightline_indicators
+
 
         Parameters
         ----------
         streets : gpd.GeoDataFrame
-            _description_
+            GeoDataFrame containing LineString geometry representing streets
         buildings : gpd.GeoDataFrame
-            _description_
-        sight_line_width : float, optional
-            _description_, by default 50
-        tan_line_width : float, optional
-            _description_, by default 300
-        sight_line_spacing : float, optional
-            _description_, by default 3
-        sight_line_junction_size : float, optional
-            _description_, by default 0.5
-        sight_line_angle_tolerance : float, optional
+            GeoDataFrame containing Polygon geometry representing buildings
+        sightline_length : float, optional
+            length of the sightline generated at each sightline point perpendiculary to
+            the street geometry, by default 50
+        tangent_length : float, optional
+            length of the sightline generated at each sightline point tangentially to
+            the street geometry, by default 300
+        sightline_spacing : float, optional
+            approximate distance between sightline points generated along streets,
+            by default 3
+        intersection_offset : float, optional
+            Offset to use at the beginning and the end of each LineString. The first
+            sightline point is generated at this distance from the start and the last
+            one is generated at this distance from the end of each geometry,
+            by default 0.5
+        angle_tolerance : float, optional
             _description_, by default 5
         height_col
         category_col : str, optional
@@ -52,11 +57,11 @@ class Streetscape:
 
 
         """
-        self.sight_line_width = sight_line_width
-        self.tan_line_width = tan_line_width
-        self.sight_line_spacing = sight_line_spacing
-        self.sight_line_junction_size = sight_line_junction_size
-        self.sight_line_angle_tolerance = sight_line_angle_tolerance
+        self.sightline_length = sightline_length
+        self.tangent_length = tangent_length
+        self.sightline_spacing = sightline_spacing
+        self.intersection_offset = intersection_offset
+        self.angle_tolerance = angle_tolerance
         self.height_col = height_col
         self.category_col = category_col
         self.building_categories_count = (
@@ -68,11 +73,11 @@ class Streetscape:
         self.SIGHTLINE_FRONT = 2
         self.SIGHTLINE_BACK = 3
 
-        self.SIGHTLINE_WIDTH_PER_SIGHT_TYPE = [
-            sight_line_width,
-            sight_line_width,
-            tan_line_width,
-            tan_line_width,
+        self.sightline_length_PER_SIGHT_TYPE = [
+            sightline_length,
+            sightline_length,
+            tangent_length,
+            tangent_length,
         ]
 
         streets = streets.copy()
@@ -100,7 +105,7 @@ class Streetscape:
         self._compute_sightline_indicators_full()
 
     # return empty list if no sight line could be build du to total road length
-    def _compute_sight_lines(
+    def _compute_sightlines(
         self,
         line: LineString,
         dead_end_start,
@@ -111,31 +116,31 @@ class Streetscape:
         # Calculate the number of profiles to generate
         line_length = line.length
 
-        remaining_length = line_length - 2 * self.sight_line_junction_size
-        if remaining_length < self.sight_line_spacing:
+        remaining_length = line_length - 2 * self.intersection_offset
+        if remaining_length < self.sightline_spacing:
             # no sight line
             return [], [], []
 
-        distances = [self.sight_line_junction_size]
-        nb_inter_nodes = int(math.floor(remaining_length / self.sight_line_spacing))
+        distances = [self.intersection_offset]
+        nb_inter_nodes = int(math.floor(remaining_length / self.sightline_spacing))
         offset = remaining_length / nb_inter_nodes
-        distance = self.sight_line_junction_size
+        distance = self.intersection_offset
 
         for i in range(0, nb_inter_nodes):
             distance = distance + offset
             distances.append(distance)
 
-        # n_prof = int(line.length/self.sight_line_spacing)
+        # n_prof = int(line.length/self.sightline_spacing)
 
         results_sight_points = []
         results_sight_points_distances = []
-        results_sight_lines = []
+        results_sightlines = []
 
         previous_sigh_line_left = None
         previous_sigh_line_right = None
 
-        # semi_ortho_segment_size = self.sight_line_spacing/2
-        semi_ortho_segment_size = self.sight_line_junction_size / 2
+        # semi_ortho_segment_size = self.sightline_spacing/2
+        semi_ortho_segment_size = self.intersection_offset / 2
 
         # display(distances)
         # display(line_length)
@@ -183,8 +188,8 @@ class Streetscape:
             vec_clock = vec_clock / len_clock
 
             # Scale them up to the profile length
-            vec_anti = vec_anti * self.sight_line_width
-            vec_clock = vec_clock * self.sight_line_width
+            vec_anti = vec_anti * self.sightline_length
+            vec_clock = vec_clock * self.sightline_length
 
             # Calculate displacements from midpoint
             prof_st = (seg_mid.x + float(vec_anti[0]), seg_mid.y + float(vec_anti[1]))
@@ -196,27 +201,27 @@ class Streetscape:
             results_sight_points.append(seg_mid)
             results_sight_points_distances.append(distance)
 
-            sight_line_left = LineString([seg_mid, prof_st])
-            sight_line_right = LineString([seg_mid, prof_end])
+            sightline_left = LineString([seg_mid, prof_st])
+            sightline_right = LineString([seg_mid, prof_end])
 
             # append LEFT sight line
             rec = [
-                sight_line_left,  # FIELD_geometry
+                sightline_left,  # FIELD_geometry
                 sightline_index,  # FIELD_uid
                 self.SIGHTLINE_LEFT,  # FIELD_type
             ]
-            results_sight_lines.append(rec)
+            results_sightlines.append(rec)
 
             # back up for dead end population
-            last_pure_sightline_left_position_in_array = len(results_sight_lines) - 1
+            last_pure_sightline_left_position_in_array = len(results_sightlines) - 1
 
             # append RIGHT sight line
             rec = [
-                sight_line_right,  # FIELD_geometry
+                sightline_right,  # FIELD_geometry
                 sightline_index,  # FIELD_uid
                 self.SIGHTLINE_RIGHT,  # FIELD_type
             ]
-            results_sight_lines.append(rec)
+            results_sightlines.append(rec)
 
             line_tan_back = LineString(
                 [
@@ -229,8 +234,8 @@ class Streetscape:
             )
 
             # extends tanline to reach parametrized width
-            line_tan_back = extend_line_end(line_tan_back, self.tan_line_width)
-            line_tan_front = extend_line_end(line_tan_front, self.tan_line_width)
+            line_tan_back = extend_line_end(line_tan_back, self.tangent_length)
+            line_tan_front = extend_line_end(line_tan_front, self.tangent_length)
 
             # append tangent sigline front view
             rec = [
@@ -238,7 +243,7 @@ class Streetscape:
                 sightline_index,  # FIELD_type
                 self.SIGHTLINE_BACK,
             ]
-            results_sight_lines.append(rec)
+            results_sightlines.append(rec)
 
             # append tangent sigline front view
             rec = [
@@ -246,40 +251,38 @@ class Streetscape:
                 sightline_index,  # FIELD_uid
                 self.SIGHTLINE_FRONT,
             ]
-            results_sight_lines.append(rec)
+            results_sightlines.append(rec)
 
             ################### THIRD PART: SIGHTLINE ENRICHMENT #################################
 
             # Populate lost space between consecutive sight lines with high deviation (>angle_tolerance)
             if previous_sigh_line_left is not None:
                 for this_line, prev_line, side in [
-                    (sight_line_left, previous_sigh_line_left, self.SIGHTLINE_LEFT),
-                    (sight_line_right, previous_sigh_line_right, self.SIGHTLINE_RIGHT),
+                    (sightline_left, previous_sigh_line_left, self.SIGHTLINE_LEFT),
+                    (sightline_right, previous_sigh_line_right, self.SIGHTLINE_RIGHT),
                 ]:
                     # angle between consecutive sight line
                     deviation = round(lines_angle(prev_line, this_line), 1)
                     # DEBUG_VALUES.append([this_line.coords[1],deviation])
                     # condition 1: large deviation
-                    if abs(deviation) <= self.sight_line_angle_tolerance:
+                    if abs(deviation) <= self.angle_tolerance:
                         continue
                     # condition 1: consecutive sight lines do not intersect
 
                     if this_line.intersects(prev_line):
                         continue
 
-                    nb_new_sight_lines = int(
-                        math.floor(abs(deviation) / self.sight_line_angle_tolerance)
+                    nb_new_sightlines = int(
+                        math.floor(abs(deviation) / self.angle_tolerance)
                     )
-                    nb_new_sight_lines_this = nb_new_sight_lines // 2
-                    nb_new_sight_lines_prev = (
-                        nb_new_sight_lines - nb_new_sight_lines_this
-                    )
-                    delta_angle = deviation / (nb_new_sight_lines)
+                    nb_new_sightlines_this = nb_new_sightlines // 2
+                    nb_new_sightlines_prev = nb_new_sightlines - nb_new_sightlines_this
+                    delta_angle = deviation / (nb_new_sightlines)
                     theta_rad = np.deg2rad(delta_angle)
 
                     # add S2 new sight line on previous one
                     angle = 0
-                    for i in range(0, nb_new_sight_lines_this):
+                    for i in range(0, nb_new_sightlines_this):
                         angle -= theta_rad
                         x0 = this_line.coords[0][0]
                         y0 = this_line.coords[0][1]
@@ -293,11 +296,11 @@ class Streetscape:
                             sightline_index,  # FIELD_uid
                             side,  # FIELD_type
                         ]
-                        results_sight_lines.append(rec)
+                        results_sightlines.append(rec)
 
                         # add S2 new sight line on this current sight line
                     angle = 0
-                    for i in range(0, nb_new_sight_lines_prev):
+                    for i in range(0, nb_new_sightlines_prev):
                         angle += theta_rad
                         x0 = prev_line.coords[0][0]
                         y0 = prev_line.coords[0][1]
@@ -311,13 +314,13 @@ class Streetscape:
                             sightline_index - 1,  # FIELD_uid
                             side,  # FIELD_type
                         ]
-                        results_sight_lines.append(rec)
+                        results_sightlines.append(rec)
 
             # =========================================
 
             # iterate
-            previous_sigh_line_left = sight_line_left
-            previous_sigh_line_right = sight_line_right
+            previous_sigh_line_left = sightline_left
+            previous_sigh_line_right = sightline_right
 
             sightline_index += 1
 
@@ -327,13 +330,13 @@ class Streetscape:
         if dead_end_start or dead_end_end:
             for prev_sg, this_sg, dead_end in [
                 (
-                    results_sight_lines[0],
-                    results_sight_lines[1],
+                    results_sightlines[0],
+                    results_sightlines[1],
                     dead_end_start,
                 ),
                 (
-                    results_sight_lines[last_pure_sightline_left_position_in_array + 1],
-                    results_sight_lines[last_pure_sightline_left_position_in_array],
+                    results_sightlines[last_pure_sightline_left_position_in_array + 1],
+                    results_sightlines[last_pure_sightline_left_position_in_array],
                     dead_end_end,
                 ),
             ]:
@@ -346,17 +349,17 @@ class Streetscape:
                 # special case --> dead end .. so 180 °
                 deviation = 180
 
-                nb_new_sight_lines = int(
-                    math.floor(abs(deviation) / self.sight_line_angle_tolerance)
+                nb_new_sightlines = int(
+                    math.floor(abs(deviation) / self.angle_tolerance)
                 )
-                nb_new_sight_lines_this = nb_new_sight_lines // 2
-                nb_new_sight_lines_prev = nb_new_sight_lines - nb_new_sight_lines_this
-                delta_angle = deviation / (nb_new_sight_lines)
+                nb_new_sightlines_this = nb_new_sightlines // 2
+                nb_new_sightlines_prev = nb_new_sightlines - nb_new_sightlines_this
+                delta_angle = deviation / (nb_new_sightlines)
                 theta_rad = np.deg2rad(delta_angle)
 
                 # add S2 new sight line on previous one
                 angle = 0
-                for i in range(0, nb_new_sight_lines_this):
+                for i in range(0, nb_new_sightlines_this):
                     angle -= theta_rad
                     x0 = this_line.coords[0][0]
                     y0 = this_line.coords[0][1]
@@ -371,11 +374,11 @@ class Streetscape:
                         this_sg[FIELD_uid],  # FIELD_uid
                         self.SIGHTLINE_LEFT,
                     ]
-                    results_sight_lines.append(rec)
+                    results_sightlines.append(rec)
 
                     # add S2 new sight line on this current sight line
                 angle = 0
-                for i in range(0, nb_new_sight_lines_prev):
+                for i in range(0, nb_new_sightlines_prev):
                     angle += theta_rad
                     x0 = prev_line.coords[0][0]
                     y0 = prev_line.coords[0][1]
@@ -389,11 +392,11 @@ class Streetscape:
                         prev_sg[FIELD_uid],  # FIELD_uid
                         self.SIGHTLINE_RIGHT,
                     ]
-                    results_sight_lines.append(rec)
+                    results_sightlines.append(rec)
             # ======================================================================================
         return (
             gpd.GeoDataFrame(
-                results_sight_lines, columns=["geometry", "point_id", "sight_type"]
+                results_sightlines, columns=["geometry", "point_id", "sight_type"]
             ),
             results_sight_points,
             results_sight_points_distances,
@@ -403,15 +406,15 @@ class Streetscape:
         street_uid = street_row.street_index
         street_geom = street_row.geometry
 
-        gdf_sight_lines, sight_lines_points, results_sight_points_distances = (
-            self._compute_sight_lines(
+        gdf_sightlines, sightlines_points, results_sight_points_distances = (
+            self._compute_sightlines(
                 street_geom, street_row.dead_end_left, street_row.dead_end_right
             )
         )
 
         # per street sightpoints indicators
         current_street_uid = street_uid
-        current_street_sight_lines_points = sight_lines_points
+        current_street_sightlines_points = sightlines_points
         current_street_left_OS_count = []
         current_street_left_OS = []
         current_street_left_SB_count = []
@@ -438,14 +441,14 @@ class Streetscape:
         current_street_back_sb = []
 
         # [Expanded] each time a sight line or intersight line occured
-        left_SEQ_sight_lines_end_points = []
-        right_SEQ_sight_lines_end_points = []
+        left_SEQ_sightlines_end_points = []
+        right_SEQ_sightlines_end_points = []
 
-        if sight_lines_points is None:
-            current_street_sight_lines_points = []
+        if sightlines_points is None:
+            current_street_sightlines_points = []
             return [
                 current_street_uid,
-                current_street_sight_lines_points,
+                current_street_sightlines_points,
                 current_street_left_OS_count,
                 current_street_left_OS,
                 current_street_left_SB_count,
@@ -466,20 +469,20 @@ class Streetscape:
                 current_street_right_SEQ_SB_categories,
                 current_street_front_sb,
                 current_street_back_sb,
-                left_SEQ_sight_lines_end_points,
-                right_SEQ_sight_lines_end_points,
+                left_SEQ_sightlines_end_points,
+                right_SEQ_sightlines_end_points,
             ], None
 
         # ------- SIGHT LINES
         # Extract building in SIGHTLINES buffer (e.g: 50m)
-        # gdf_street_buildings = gdf_buildings.iloc[rtree_buildings.extract_ids(street_geom.buffer(sight_line_width))]
+        # gdf_street_buildings = gdf_buildings.iloc[rtree_buildings.extract_ids(street_geom.buffer(sightline_length))]
         # building_count = len(gdf_street_buildings)
 
         # iterate throught sightlines groups.
         # Eeach sigh points could have many sub sighpoint in case of snail effect)
-        for point_id, group in gdf_sight_lines.groupby("point_id"):
-            front_sl_tan_sb = self.tan_line_width
-            back_sl_tan_sb = self.tan_line_width
+        for point_id, group in gdf_sightlines.groupby("point_id"):
+            front_sl_tan_sb = self.tangent_length
+            back_sl_tan_sb = self.tangent_length
             left_sl_count = 0
             left_sl_distance_total = 0
             left_sl_building_count = 0
@@ -496,55 +499,55 @@ class Streetscape:
 
             # iterate throught each sightline links to the sigh point: LEFT(1-*),RIGHT(1-*),FRONT(1), BACK(1)
             for i_sg, row_s in group.iterrows():
-                sight_line_geom = row_s.geometry
-                sight_line_side = row_s.sight_type
-                sight_line_width = self.SIGHTLINE_WIDTH_PER_SIGHT_TYPE[sight_line_side]
+                sightline_geom = row_s.geometry
+                sightline_side = row_s.sight_type
+                sightline_length = self.sightline_length_PER_SIGHT_TYPE[sightline_side]
                 # extract possible candidates
-                if optimize_on and sight_line_side >= self.SIGHTLINE_FRONT:
+                if optimize_on and sightline_side >= self.SIGHTLINE_FRONT:
                     # ========== OPTIM TEST
                     # cut tan line in 3 block (~100m)
-                    length_3 = sight_line_geom.length / 3.0
-                    A = sight_line_geom.coords[0]
-                    B = sight_line_geom.coords[-1]
+                    length_3 = sightline_geom.length / 3.0
+                    A = sightline_geom.coords[0]
+                    B = sightline_geom.coords[-1]
                     end_points = [
-                        sight_line_geom.interpolate(length_3),
-                        sight_line_geom.interpolate(length_3 * 2),
+                        sightline_geom.interpolate(length_3),
+                        sightline_geom.interpolate(length_3 * 2),
                         B,
                     ]
 
-                    gdf_sight_line_buildings = None
+                    gdf_sightline_buildings = None
                     start_point = A
                     for end_point in end_points:
                         sub_line = LineString([start_point, end_point])
-                        gdf_sight_line_buildings = self.buildings.iloc[
+                        gdf_sightline_buildings = self.buildings.iloc[
                             self.rtree_buildings.extract_ids(sub_line)
                         ]
-                        if len(gdf_sight_line_buildings) > 0:
+                        if len(gdf_sightline_buildings) > 0:
                             break
                         start_point = end_point
                 else:
-                    gdf_sight_line_buildings = self.buildings.iloc[
-                        self.rtree_buildings.extract_ids(sight_line_geom)
+                    gdf_sightline_buildings = self.buildings.iloc[
+                        self.rtree_buildings.extract_ids(sightline_geom)
                     ]
 
-                s_pt1 = Point(sight_line_geom.coords[0])
-                endpoint = Point(sight_line_geom.coords[-1])
+                s_pt1 = Point(sightline_geom.coords[0])
+                endpoint = Point(sightline_geom.coords[-1])
 
                 # agregate
                 match_sl_distance = (
-                    sight_line_width  # set max distance if no polygon intersect
+                    sightline_length  # set max distance if no polygon intersect
                 )
                 match_sl_building_id = None
                 match_sl_building_category = None
                 match_sl_building_height = 0
 
                 sl_coverage_ratio_total = 0
-                for i, res in gdf_sight_line_buildings.iterrows():
+                for i, res in gdf_sightline_buildings.iterrows():
                     # building geom
                     geom = res.geometry
                     geom = geom if isinstance(geom, Polygon) else geom.geoms[0]
                     building_ring = LineString(geom.exterior.coords)
-                    isect = sight_line_geom.intersection(building_ring)
+                    isect = sightline_geom.intersection(building_ring)
                     if not isect.is_empty:
                         if isinstance(isect, Point):
                             isect = [isect]
@@ -568,13 +571,13 @@ class Streetscape:
                                 )
 
                         # coverage ratio between sight line and candidate building (geom: building geom)
-                        _coverage_isec = sight_line_geom.intersection(geom)
+                        _coverage_isec = sightline_geom.intersection(geom)
                         # display(type(coverage_isec))
                         sl_coverage_ratio_total += _coverage_isec.length
 
-                if sight_line_side == self.SIGHTLINE_LEFT:
+                if sightline_side == self.SIGHTLINE_LEFT:
                     left_sl_count += 1
-                    left_SEQ_sight_lines_end_points.append(endpoint)
+                    left_SEQ_sightlines_end_points.append(endpoint)
                     left_sl_distance_total += match_sl_distance
                     left_sl_coverage_ratio_total += sl_coverage_ratio_total
                     if match_sl_building_id:
@@ -587,9 +590,9 @@ class Streetscape:
                             match_sl_building_category
                         )
 
-                elif sight_line_side == self.SIGHTLINE_RIGHT:
+                elif sightline_side == self.SIGHTLINE_RIGHT:
                     right_sl_count += 1
-                    right_SEQ_sight_lines_end_points.append(endpoint)
+                    right_SEQ_sightlines_end_points.append(endpoint)
                     right_sl_distance_total += match_sl_distance
                     right_sl_coverage_ratio_total += sl_coverage_ratio_total
                     if match_sl_building_id:
@@ -602,9 +605,9 @@ class Streetscape:
                             match_sl_building_category
                         )
 
-                elif sight_line_side == self.SIGHTLINE_BACK:
+                elif sightline_side == self.SIGHTLINE_BACK:
                     back_sl_tan_sb = match_sl_distance
-                elif sight_line_side == self.SIGHTLINE_FRONT:
+                elif sightline_side == self.SIGHTLINE_FRONT:
                     front_sl_tan_sb = match_sl_distance
 
             # LEFT
@@ -655,12 +658,12 @@ class Streetscape:
 
         # ------- TAN LINES
         # Extract building in TANLINES buffer (e.g: 300m)
-        # gdf_street_buildings = gdf_buildings.iloc[rtree_buildings.extract_ids(street_geom.buffer(PARAM_tan_line_width))]
+        # gdf_street_buildings = gdf_buildings.iloc[rtree_buildings.extract_ids(street_geom.buffer(PARAM_tangent_length))]
         # building_count = len(gdf_street_buildings)
 
         return [
             current_street_uid,
-            current_street_sight_lines_points,
+            current_street_sightlines_points,
             current_street_left_OS_count,
             current_street_left_OS,
             current_street_left_SB_count,
@@ -681,24 +684,22 @@ class Streetscape:
             current_street_right_SEQ_SB_categories,
             current_street_front_sb,
             current_street_back_sb,
-            left_SEQ_sight_lines_end_points,
-            right_SEQ_sight_lines_end_points,
-        ], gdf_sight_lines
+            left_SEQ_sightlines_end_points,
+            right_SEQ_sightlines_end_points,
+        ], gdf_sightlines
 
     def _compute_sightline_indicators_full(self):
         values = []
 
         for street_uid, street_row in self.streets.iterrows():
-            indicators, gdf_sight_lines = self._compute_sigthlines_indicators(
-                street_row
-            )
+            indicators, gdf_sightlines = self._compute_sigthlines_indicators(street_row)
             values.append(indicators)
 
         df = pd.DataFrame(
             values,
             columns=[
                 "street_index",
-                "sight_line_points",
+                "sightline_points",
                 "left_OS_count",
                 "left_OS",
                 "left_SB_count",
@@ -750,20 +751,19 @@ class Streetscape:
             axis=1,
         )
         df["street_length"] = self.streets.length
-        # df["street_width"] = self.streets.street_width  # TODO: this comes as an attribute?
         df["windingness"] = 1 - momepy.linearity(self.streets)
 
         self._sightline_indicators = df
 
     def _compute_sigthlines_plot_indicators_one_side(
-        self, sight_line_points, OS_count, SEQ_OS_endpoint
+        self, sightline_points, OS_count, SEQ_OS_endpoint
     ):
         parcel_SB_count = []
         parcel_SEQ_SB_ids = []
         parcel_SEQ_SB = []
         parcel_SEQ_SB_depth = []
 
-        N = len(sight_line_points)
+        N = len(sightline_points)
         if N == 0:
             parcel_SB_count = [0] * N
             return [
@@ -775,20 +775,20 @@ class Streetscape:
 
         idx_end_point = 0
 
-        for sight_point, os_count in zip(sight_line_points, OS_count):
+        for sight_point, os_count in zip(sightline_points, OS_count):
             n_sightlines_touching = 0
             for i in range(os_count):
-                sight_line_geom = LineString(
+                sightline_geom = LineString(
                     [sight_point, SEQ_OS_endpoint[idx_end_point]]
                 )
-                s_pt1 = Point(sight_line_geom.coords[0])
+                s_pt1 = Point(sightline_geom.coords[0])
 
                 gdf_items = self.plots.iloc[
-                    self.rtree_parcels.extract_ids(sight_line_geom)
+                    self.rtree_parcels.extract_ids(sightline_geom)
                 ]
 
                 match_distance = (
-                    self.sight_line_width  # set max distance if no polygon intersect
+                    self.sightline_length  # set max distance if no polygon intersect
                 )
                 match_id = None
                 match_geom = None
@@ -798,7 +798,7 @@ class Streetscape:
                     geom = res.geometry
                     geom = geom if isinstance(geom, Polygon) else geom.geoms[0]
                     contour = LineString(geom.exterior.coords)
-                    isect = sight_line_geom.intersection(contour)
+                    isect = sightline_geom.intersection(contour)
                     if not isect.is_empty:
                         if isinstance(isect, Point):
                             isect = [isect]
@@ -825,7 +825,7 @@ class Streetscape:
                         match_geom = match_geom.buffer(0)
                     isec = match_geom.intersection(
                         extend_line_end(
-                            sight_line_geom, self.sight_line_plot_depth_extension
+                            sightline_geom, self.sightline_plot_depth_extension
                         )
                     )
                     if (not isinstance(isec, LineString)) and (
@@ -842,31 +842,32 @@ class Streetscape:
         return [parcel_SB_count, parcel_SEQ_SB_ids, parcel_SEQ_SB, parcel_SEQ_SB_depth]
 
     def compute_plots(
-        self, plots: gpd.GeoDataFrame, sight_line_plot_depth_extension: float = 300
+        self, plots: gpd.GeoDataFrame, sightline_plot_depth_extension: float = 300
     ):
-        self.sight_line_plot_depth_extension = sight_line_plot_depth_extension
+        self.sightline_plot_depth_extension = sightline_plot_depth_extension
 
         self.rtree_parcels = RtreeIndex("parcels", plots)
         plots = plots.copy()
         plots["parcel_id"] = np.arange(len(plots))
         self.plots = plots
+        self.plots["perimeter"] = self.plots.length
 
         values = []
 
         for uid, row in self._sightline_indicators.iterrows():
-            sight_line_values = [uid]
+            sightline_values = [uid]
 
             side_values = self._compute_sigthlines_plot_indicators_one_side(
-                row.sight_line_points, row.left_OS_count, row.left_SEQ_OS_endpoints
+                row.sightline_points, row.left_OS_count, row.left_SEQ_OS_endpoints
             )
-            sight_line_values += side_values
+            sightline_values += side_values
 
             side_values = self._compute_sigthlines_plot_indicators_one_side(
-                row.sight_line_points, row.right_OS_count, row.right_SEQ_OS_endpoints
+                row.sightline_points, row.right_OS_count, row.right_SEQ_OS_endpoints
             )
-            sight_line_values += side_values
+            sightline_values += side_values
 
-            values.append(sight_line_values)
+            values.append(sightline_values)
 
         df = pd.DataFrame(
             values,
@@ -882,9 +883,204 @@ class Streetscape:
                 "right_parcel_SEQ_SB_depth",
             ],
         )
-        df = df.set_index("street_index")
+        df = df.set_index("street_index").join(self._sightline_indicators.street_length)
 
         self._plot_indicators = df
+
+    def _aggregate_plots(self):
+        values = []
+
+        for street_uid, row in self._plot_indicators.iterrows():
+            left_parcel_SB_count = row.left_parcel_SB_count
+            left_parcel_SEQ_SB_ids = row.left_parcel_SEQ_SB_ids
+            left_parcel_SEQ_SB = row.left_parcel_SEQ_SB
+            left_parcel_SEQ_SB_depth = row.left_parcel_SEQ_SB_depth
+            right_parcel_SB_count = row.right_parcel_SB_count
+            right_parcel_SEQ_SB_ids = row.right_parcel_SEQ_SB_ids
+            right_parcel_SEQ_SB = row.right_parcel_SEQ_SB
+            right_parcel_SEQ_SB_depth = row.right_parcel_SEQ_SB_depth
+            street_length = row.street_length
+
+            N = len(left_parcel_SB_count)
+            if N == 0:
+                values.append(
+                    [
+                        street_uid,
+                        0,
+                        0,  # np_l, np_r
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                        math.nan,
+                    ]
+                )
+                continue
+
+            left_parcel_SEQ_SB_depth = [
+                d if d >= 1 else 1 for d in left_parcel_SEQ_SB_depth
+            ]
+            right_parcel_SEQ_SB_depth = [
+                d if d >= 1 else 1 for d in right_parcel_SEQ_SB_depth
+            ]
+
+            left_unique_ids = set(left_parcel_SEQ_SB_ids)
+            right_unique_ids = set(right_parcel_SEQ_SB_ids)
+            all_unique_ids = left_unique_ids.union(right_unique_ids)
+
+            left_parcel_freq = len(left_unique_ids) / street_length
+            right_parcel_freq = len(right_unique_ids) / street_length
+            parcel_freq = len(all_unique_ids) / street_length
+
+            # compute sightline weights
+            left_sight_weight = []
+            # iterate all sight point
+            for sb_count in left_parcel_SB_count:
+                if sb_count != 0:
+                    w = 1.0 / sb_count
+                    for i in range(sb_count):
+                        left_sight_weight.append(w)
+
+            right_sight_weight = []
+            # iterate all sight point
+            for sb_count in right_parcel_SB_count:
+                if sb_count != 0:
+                    w = 1.0 / sb_count
+                    for i in range(sb_count):
+                        right_sight_weight.append(w)
+
+            # build depth dataframe with interzsighline weight
+            df_depth = [
+                [parcel_id, w, sb, depth, self.SIGHTLINE_LEFT]
+                for parcel_id, w, sb, depth in zip(
+                    left_parcel_SEQ_SB_ids,
+                    left_sight_weight,
+                    left_parcel_SEQ_SB,
+                    left_parcel_SEQ_SB_depth,
+                )
+            ]
+            df_depth += [
+                [parcel_id, w, sb, depth, self.SIGHTLINE_RIGHT]
+                for parcel_id, w, sb, depth in zip(
+                    right_parcel_SEQ_SB_ids,
+                    right_sight_weight,
+                    right_parcel_SEQ_SB,
+                    right_parcel_SEQ_SB_depth,
+                )
+            ]
+
+            df_depth = pd.DataFrame(
+                df_depth, columns=["parcel_id", "w", "sb", "depth", "side"]
+            ).set_index("parcel_id")
+            df_depth["w_sb"] = df_depth.w * df_depth.sb
+            df_depth["w_depth"] = df_depth.w * df_depth.depth
+
+            df_depth_left = df_depth[df_depth.side == self.SIGHTLINE_LEFT]
+            df_depth_right = df_depth[df_depth.side == self.SIGHTLINE_RIGHT]
+
+            np_l = int(df_depth_left.w.sum())
+            np_r = int(df_depth_right.w.sum())
+            np_lr = np_l + np_r
+
+            left_parcel_SB = (
+                df_depth_left.w_sb.sum() / np_l if np_l > 0 else self.sightline_length
+            )
+            right_parcel_SB = (
+                df_depth_right.w_sb.sum() / np_r if np_r > 0 else self.sightline_length
+            )
+            parcel_SB = (
+                df_depth.w_sb.sum() / np_lr if np_lr > 0 else self.sightline_length
+            )
+
+            left_parcel_depth = df_depth_left.w_depth.sum() / np_l if np_l > 0 else 0
+            right_parcel_depth = df_depth_right.w_depth.sum() / np_r if np_r > 0 else 0
+            parcel_depth = df_depth.w_depth.sum() / np_lr if np_lr > 0 else 0
+
+            WD_ratio_list = []
+            WP_ratio_list = []
+            # TODO: this thing is pretty terrible and needs to be completely redone
+            # It is a massive bottleneck
+            for df in [df_depth, df_depth_left, df_depth_right]:
+                if len(df) == 0:
+                    WD_ratio_list.append(0)
+                    WP_ratio_list.append(0)
+                    continue
+
+                df = (
+                    df[["w", "w_depth"]]
+                    .groupby(level=0)
+                    .aggregate(
+                        nb=pd.NamedAgg(column="w", aggfunc=len),
+                        w_sum=pd.NamedAgg(column="w", aggfunc="sum"),
+                        w_depth=pd.NamedAgg(column="w_depth", aggfunc="mean"),
+                    )
+                )
+
+                df = df.join(self.plots.perimeter)
+                sum_nb = df.nb.sum()
+
+                wd_ratio = (
+                    (df.w_sum * self.sightline_spacing * df.nb) / df.w_depth
+                ).sum() / sum_nb
+                wp_ratio = (
+                    (df.w_sum * self.sightline_spacing * df.nb) / df.perimeter
+                ).sum() / sum_nb
+                WD_ratio_list.append(wd_ratio)
+                WP_ratio_list.append(wp_ratio)
+
+            values.append(
+                [
+                    street_uid,
+                    np_l,
+                    np_r,
+                    parcel_SB,
+                    left_parcel_SB,
+                    right_parcel_SB,
+                    parcel_freq,
+                    left_parcel_freq,
+                    right_parcel_freq,
+                    parcel_depth,
+                    left_parcel_depth,
+                    right_parcel_depth,
+                ]
+                + WD_ratio_list
+                + WP_ratio_list
+            )
+
+        columns = [
+            "uid",
+            "left_plot_count",
+            "right_plot_count",
+            "plot_SB",
+            "left_plot_SB",
+            "right_plot_SB",
+            "plot_freq",
+            "left_plot_freq",
+            "right_plot_freq",
+            "plot_depth",
+            "left_plot_depth",
+            "right_plot_depth",
+            "plot_WD_ratio",
+            "left_plot_WD_ratio",
+            "right_plot_WD_ratio",
+            "plot_WP_ratio",
+            "left_plot_WP_ratio",
+            "right_plot_WP_ratio",
+        ]
+
+        self._aggregate_plot_data = pd.DataFrame(values, columns=columns).set_index(
+            "uid"
+        )
 
     def _compute_slope(self, road_row):
         start = road_row.sl_start  # Point z
@@ -983,7 +1179,7 @@ class Streetscape:
 
         z_points_list = []
 
-        for row in self._sightline_indicators["sight_line_points"].apply(
+        for row in self._sightline_indicators["sightline_points"].apply(
             lambda x: MultiPoint(x) if x else None
         ):
             if row is not None:
@@ -1048,7 +1244,7 @@ class Streetscape:
                 continue
             if max_distance is None or max(sb_a, sb_b) <= max_distance:
                 is_parralel_with_next.append(
-                    abs(sb_a - sb_b) < self.sight_line_spacing / 3
+                    abs(sb_a - sb_b) < self.sightline_spacing / 3
                 )
             else:
                 is_parralel_with_next.append(False)
@@ -1214,12 +1410,12 @@ class Streetscape:
             sum_right_SB = np.sum(rel_right_SB)
 
             # SETBACK default values
-            ind_left_SB = sum_left_SB / n_l if n_l > 0 else self.sight_line_width
-            ind_right_SB = sum_right_SB / n_r if n_r > 0 else self.sight_line_width
+            ind_left_SB = sum_left_SB / n_l if n_l > 0 else self.sightline_length
+            ind_right_SB = sum_right_SB / n_r if n_r > 0 else self.sightline_length
             ind_SB = (
                 (sum_left_SB + sum_right_SB) / (n_l_plus_r)
                 if n_l_plus_r > 0
-                else self.sight_line_width
+                else self.sightline_length
             )
 
             sum_square_error_left_SB = np.sum(
@@ -1246,15 +1442,15 @@ class Streetscape:
 
             # medianes
             ind_left_SB_med = (
-                np.median(rel_left_SB) if n_l > 0 else self.sight_line_width
+                np.median(rel_left_SB) if n_l > 0 else self.sightline_length
             )
             ind_right_SB_med = (
-                np.median(rel_right_SB) if n_r > 0 else self.sight_line_width
+                np.median(rel_right_SB) if n_r > 0 else self.sightline_length
             )
             ind_SB_med = (
                 np.median(np.concatenate([rel_left_SB, rel_right_SB]))
                 if n_l_plus_r > 0
-                else self.sight_line_width
+                else self.sightline_length
             )
 
             # MAD
@@ -1404,7 +1600,7 @@ class Streetscape:
                         / (n_tan_ratio - 1)
                     )
 
-            # version de l'indictaur sans horizon (max = sightline_width)
+            # version de l'indictaur sans horizon (max = sightline_length)
             (
                 ind_left_par_tot,
                 ind_left_par_rel,
@@ -1451,10 +1647,10 @@ class Streetscape:
 
             # Built coverage
             ind_left_built_coverage = (
-                np.mean(left_BUILT_COVERAGE) / self.sight_line_width
+                np.mean(left_BUILT_COVERAGE) / self.sightline_length
             )
             ind_right_built_coverage = (
-                np.mean(right_BUILT_COVERAGE) / self.sight_line_width
+                np.mean(right_BUILT_COVERAGE) / self.sightline_length
             )
             ind_built_coverage = (
                 ind_left_built_coverage + ind_right_built_coverage
@@ -1631,6 +1827,10 @@ class Streetscape:
             self._compute_prevalences()
             df = df.join(self.prevalences)
 
+        if hasattr(self, "plots"):
+            self._aggregate_plots()
+            df = df.join(self._aggregate_plot_data)
+
         if hasattr(self, "slope"):
             df = df.join(self.slope)
 
@@ -1715,7 +1915,7 @@ class Streetscape:
         # values based on counts and getting average per point when there's more?
         point_data = self._sightline_indicators[
             [
-                "sight_line_points",
+                "sightline_points",
                 "left_OS_count",
                 "left_OS",
                 "left_SB_count",
@@ -1760,7 +1960,7 @@ class Streetscape:
                 )
 
         return point_data.set_geometry(
-            "sight_line_points", crs=self.streets.crs
+            "sightline_points", crs=self.streets.crs
         ).rename_geometry("geometry")
 
 
