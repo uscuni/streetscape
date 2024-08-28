@@ -1710,9 +1710,7 @@ class Streetscape:
         )
 
     def point_level(self):
-        # TODO: compute left-right averages/sums per point
-
-        # TODO 2: figure out how to include plot-based indicators as each point may have
+        # TODO: figure out how to include plot-based indicators as each point may have
         # more then one value in self._plot_indicators. Probably unpacking all the
         # values based on counts and getting average per point when there's more?
         point_data = self._sightline_indicators[
@@ -1739,6 +1737,27 @@ class Streetscape:
         point_data = point_data.explode(point_data.columns.tolist())
         for col in point_data.columns[1:]:
             point_data[col] = pd.to_numeric(point_data[col])
+
+        for ind in [
+            "OS_count",
+            "OS",
+            "SB_count",
+            "SB",
+            "H",
+            "HW",
+            "BUILT_COVERAGE",
+        ]:
+            if "count" in ind:
+                sums = point_data[[f"left_{ind}", f"right_{ind}"]].sum(axis=1)
+                nan_mask = (
+                    point_data[[f"left_{ind}", f"right_{ind}"]].isna().all(axis=1)
+                )
+                sums[nan_mask] = np.nan
+                point_data[ind] = sums
+            else:
+                point_data[ind] = point_data[[f"left_{ind}", f"right_{ind}"]].mean(
+                    axis=1
+                )
 
         return point_data.set_geometry(
             "sight_line_points", crs=self.streets.crs
