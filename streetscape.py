@@ -3,14 +3,12 @@ import warnings
 
 import geopandas as gpd
 import numpy as np
-import rtree
 import pandas as pd
 import momepy
 import shapely
 import xvec  # noqa: F401
 
 from shapely import Point, Polygon, MultiPoint, LineString, MultiLineString
-
 
 class Streetscape:
     def __init__(
@@ -99,9 +97,7 @@ class Streetscape:
         buildings["street_index"] = np.arange(len(buildings))
         self.buildings = buildings
 
-        self.rtree_streets = RtreeIndex("streets", self.streets)
-
-        self.rtree_buildings = RtreeIndex("buildings", self.buildings)
+        self.rtree_buildings = self.buildings.sindex
 
         self._compute_sightline_indicators_full()
 
@@ -525,14 +521,16 @@ class Streetscape:
                     for end_point in end_points:
                         sub_line = LineString([start_point, end_point])
                         gdf_sightline_buildings = self.buildings.iloc[
-                            self.rtree_buildings.extract_ids(sub_line)
+                            self.rtree_buildings.query(sub_line, predicate="intersects")
                         ]
                         if len(gdf_sightline_buildings) > 0:
                             break
                         start_point = end_point
                 else:
                     gdf_sightline_buildings = self.buildings.iloc[
-                        self.rtree_buildings.extract_ids(sightline_geom)
+                        self.rtree_buildings.query(
+                            sightline_geom, predicate="intersects"
+                        )
                     ]
 
                 s_pt1 = Point(sightline_geom.coords[0])
@@ -696,8 +694,10 @@ class Streetscape:
     def _compute_sightline_indicators_full(self):
         values = []
 
-        for street_uid, street_row in self.streets.iterrows():
-            indicators, gdf_sightlines = self._compute_sigthlines_indicators(street_row)
+        for street_row in self.streets[
+            ["street_index", "geometry", "dead_end_left", "dead_end_right"]
+        ].itertuples(index=False):
+            indicators, _ = self._compute_sigthlines_indicators(street_row)
             values.append(indicators)
 
         df = pd.DataFrame(
@@ -789,7 +789,7 @@ class Streetscape:
                 s_pt1 = Point(sightline_geom.coords[0])
 
                 gdf_items = self.plots.iloc[
-                    self.rtree_parcels.extract_ids(sightline_geom)
+                    self.rtree_parcels.query(sightline_geom, predicate="intersects")
                 ]
 
                 match_distance = (
@@ -851,7 +851,7 @@ class Streetscape:
     ):
         self.sightline_plot_depth_extension = sightline_plot_depth_extension
 
-        self.rtree_parcels = RtreeIndex("parcels", plots)
+        self.rtree_parcels = plots.sindex
         plots = plots.copy()
         plots["parcel_id"] = np.arange(len(plots))
         self.plots = plots
@@ -2074,52 +2074,3 @@ def lines_angle(l1, l2):
             angle = ab + 0
     # return #np.rad2deg(angle)
     return np.rad2deg(angle)
-
-
-class RtreeIndex:
-    gdf = None
-    rtree_index = None
-    geom_rtree_list = None
-    uid_rtree_list = None
-    name = None
-    verbose_function = None
-
-    def __init__(self, name, gdf, verbose_function=None):
-        self.name = name
-        self.gdf = gdf
-        self.verbose_function = verbose_function
-        rtree_index = rtree.index.Index()
-        # build spatial index
-        self.log("rtree creation...")
-        geom_rtree_list = []
-        uid_rtree_list = []
-        rtree_id = 0
-        for uid, res in gdf.iterrows():
-            geom = res.geometry
-            geom_rtree_list.append(geom)
-            uid_rtree_list.append(uid)
-            rtree_index.insert(rtree_id, geom.bounds)
-            rtree_id += 1
-        self.log("rtree built.")
-        self.rtree_index = rtree_index
-        self.geom_rtree_list = geom_rtree_list
-        self.uid_rtree_list = uid_rtree_list
-
-    def extract_ids(self, intersecting_geom):
-        iterator = self.rtree_index.intersection(intersecting_geom.bounds)
-        result = []
-        for rtree_position in iterator:
-            geom = self.geom_rtree_list[rtree_position]
-            if not geom.is_valid:
-                geom = geom.buffer(-0.001)
-            isect = intersecting_geom.intersection(geom)
-            if not isect.is_empty:
-                result.append(rtree_position)
-        return result
-
-    def select(self, ids):
-        return self.gdf.iloc[ids]
-
-    def log(self, message):
-        if self.verbose_function is not None:
-            self.verbose_function(f"RTREE[{self.name}]: {message}")
