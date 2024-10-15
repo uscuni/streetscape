@@ -10,6 +10,7 @@ import xvec  # noqa: F401
 
 from shapely import Point, Polygon, MultiPoint, LineString, MultiLineString
 
+
 class Streetscape:
     def __init__(
         self,
@@ -533,8 +534,8 @@ class Streetscape:
                         )
                     ]
 
-                s_pt1 = Point(sightline_geom.coords[0])
-                endpoint = Point(sightline_geom.coords[-1])
+                s_pt1 = shapely.get_point(sightline_geom, 0)
+                endpoint = shapely.get_point(sightline_geom, -1)
 
                 # agregate
                 match_sl_distance = (
@@ -548,30 +549,18 @@ class Streetscape:
                 for i, res in gdf_sightline_buildings.iterrows():
                     # building geom
                     geom = res.geometry
-                    geom = geom if isinstance(geom, Polygon) else geom.geoms[0]
-                    building_ring = LineString(geom.exterior.coords)
-                    isect = sightline_geom.intersection(building_ring)
+                    isect = sightline_geom.intersection(geom.exterior)
                     if not isect.is_empty:
-                        if isinstance(isect, Point):
-                            isect = [isect]
-                        elif isinstance(isect, LineString):
-                            isect = [Point(coord) for coord in isect.coords]
-                        elif isinstance(isect, MultiPoint):
-                            isect = [pt for pt in isect.geoms]
-
-                        for pt_sec in isect:
-                            dist = s_pt1.distance(pt_sec)
-                            if dist < match_sl_distance:
-                                match_sl_distance = dist
-                                match_sl_building_id = res.street_index
-                                match_sl_building_height = (
-                                    res[self.height_col] if self.height_col else np.nan
-                                )
-                                match_sl_building_category = (
-                                    res[self.category_col]
-                                    if self.category_col
-                                    else None
-                                )
+                        dist = s_pt1.distance(isect)
+                        if dist < match_sl_distance:
+                            match_sl_distance = dist
+                            match_sl_building_id = res.street_index
+                            match_sl_building_height = (
+                                res[self.height_col] if self.height_col else np.nan
+                            )
+                            match_sl_building_category = (
+                                res[self.category_col] if self.category_col else None
+                            )
 
                         # coverage ratio between sight line and candidate building (geom: building geom)
                         _coverage_isec = sightline_geom.intersection(geom)
@@ -798,26 +787,13 @@ class Streetscape:
                 match_id = None
                 match_geom = None
 
-                for i, res in gdf_items.iterrows():
-                    # building geom
-                    geom = res.geometry
-                    geom = geom if isinstance(geom, Polygon) else geom.geoms[0]
-                    contour = LineString(geom.exterior.coords)
-                    isect = sightline_geom.intersection(contour)
-                    if not isect.is_empty:
-                        if isinstance(isect, Point):
-                            isect = [isect]
-                        elif isinstance(isect, LineString):
-                            isect = [Point(coord) for coord in isect.coords]
-                        elif isinstance(isect, MultiPoint):
-                            isect = [pt for pt in isect.geoms]
-
-                        for pt_sec in isect:
-                            dist = s_pt1.distance(pt_sec)
-                            if dist < match_distance:
-                                match_distance = dist
-                                match_id = res.parcel_id
-                                match_geom = geom
+                if not gdf_items.empty:
+                    _distances = gdf_items.exterior.intersection(
+                        sightline_geom
+                    ).distance(s_pt1)
+                    match_id = _distances.idxmin()
+                    match_distance = _distances.min()
+                    match_geom = gdf_items.geometry[match_id]
 
                 # ---------------
                 # result in intersightline
