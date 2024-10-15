@@ -8,7 +8,7 @@ import momepy
 import shapely
 import xvec  # noqa: F401
 
-from shapely import Point, Polygon, MultiPoint, LineString, MultiLineString
+from shapely import Point, MultiPoint, LineString, MultiLineString
 
 
 class Streetscape:
@@ -26,7 +26,8 @@ class Streetscape:
     ) -> None:
         """Streetscape analysis based on sightlines
 
-
+        This is a direct implementation of the algorithm proposed in Araldi and Fusco
+        2024.
 
         Parameters
         ----------
@@ -49,13 +50,14 @@ class Streetscape:
             one is generated at this distance from the end of each geometry,
             by default 0.5
         angle_tolerance : float, optional
-            _description_, by default 5
-        height_col
+            Maximum angle between sightlines that does not require infill lines to be
+            generated, by default 5
+        height_col : str, optional
+            name of a column of the buildings DataFrame containing the information
+            about the building height in meters.
         category_col : str, optional
             name of a column of the buildings DataFrame containing the information
             about the building category encoded as integer labels.
-
-
         """
         self.sightline_length = sightline_length
         self.tangent_length = tangent_length
@@ -132,8 +134,6 @@ class Streetscape:
             distance = distance + offset
             distances.append(distance)
 
-        # n_prof = int(line.length/self.sightline_spacing)
-
         results_sight_points = []
         results_sight_points_distances = []
         results_sightlines = []
@@ -143,9 +143,6 @@ class Streetscape:
 
         # semi_ortho_segment_size = self.sightline_spacing/2
         semi_ortho_segment_size = self.intersection_offset / 2
-
-        # display(distances)
-        # display(line_length)
 
         sightline_index = 0
 
@@ -477,8 +474,6 @@ class Streetscape:
 
         # ------- SIGHT LINES
         # Extract building in SIGHTLINES buffer (e.g: 50m)
-        # gdf_street_buildings = gdf_buildings.iloc[rtree_buildings.extract_ids(street_geom.buffer(sightline_length))]
-        # building_count = len(gdf_street_buildings)
 
         # iterate throught sightlines groups.
         # Eeach sigh points could have many sub sighpoint in case of snail effect)
@@ -500,7 +495,7 @@ class Streetscape:
             right_sl_coverage_ratio_total = 0
 
             # iterate throught each sightline links to the sigh point: LEFT(1-*),RIGHT(1-*),FRONT(1), BACK(1)
-            for i_sg, row_s in group.iterrows():
+            for row_s in group.itertuples(index=False):
                 sightline_geom = row_s.geometry
                 sightline_side = row_s.sight_type
                 sightline_length = self.sightline_length_PER_SIGHT_TYPE[sightline_side]
@@ -546,7 +541,7 @@ class Streetscape:
                 match_sl_building_height = 0
 
                 sl_coverage_ratio_total = 0
-                for i, res in gdf_sightline_buildings.iterrows():
+                for _, res in gdf_sightline_buildings.iterrows():
                     # building geom
                     geom = res.geometry
                     isect = sightline_geom.intersection(geom.exterior)
