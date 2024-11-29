@@ -10,6 +10,10 @@ This repository contains the development code, example code and example data for
 1. Université Côte d’Azur-CNRS-AMU-AU, ESPACE, 98 Bd Edouard Herriot, 06200, Nice, France
 2. Department of Social Geography and Regional Development, Charles University, Albertov 6  128 00 Praha 2, Czech Republic
 
+## Streetscape implementation
+
+The final version of the streetscape morphometrics is included in the version 0.9.1 of `momepy`. Please see the `streetscape.py` module within [`pysal/momepy` repository](https://github.com/pysal/momepy).
+
 ## Running the example
 
 You can reproduce the `example-france.ipynb` using the environment defined by [Pixi](https://pixi.sh).
