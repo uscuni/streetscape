@@ -33,3 +33,10 @@ pixi run jupyter lab
 ## Output files
 
 The files in the `data/output` folder are generated using the `momepy.Streetscape` class and are saved as Apache GeoParquet files, to reduce their footprint. GeoParquet can be opened using `geopandas.read_parquet` and converted to any other file type as needed.
+
+
+## License
+
+The data is available under the [Open License 2.0](https://geoservices.ign.fr/cgu-licences) © IGN - 2024.
+
+The code is available under MIT License.
